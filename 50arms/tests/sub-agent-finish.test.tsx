@@ -3,7 +3,7 @@ import "./run-tests-with-npm-test.generated"
 // and that the wording is the bundle's `subagent.stop` text (CP-146).
 import { describe, expect } from 'claude-code/testing'
 
-import { SPAWNED_KEPT, announcedBy, endedWithParent, endsWithParent, finishedAgentLabel, finishedAgentsText, spawnedAfter } from '../hooks/context/record'
+import { SPAWNED_KEPT, announcedBy, endedWithParent, finishedAgentLabel, finishedAgentsText, spawnedAfter } from '../hooks/context/record'
 import { INTERIM_NOTE } from '../hooks/context/interim-notice'
 import { test, SURFACES, EVENT_TEXT, bundleEvent, dashboard, deliveredReports, startSession } from './plan-kit'
 
@@ -12,7 +12,7 @@ The session "Shelfwise: search books" you started (local_61d5e678-7063-4899-be62
 </system-reminder>`
 
 describe('the sub-agent finish notice (pure)', () => {
-  const agent = { description: 'Build the search box', background: true, direct: true, parent: null as string | null, ended: false }
+  const agent = { description: 'Build the search box', background: true, direct: true, parent: null as string | null }
   test('it names the agent by description and id and by the cards its brief named, then carries the bundle text as it is', () => {
     expect(finishedAgentLabel('a1', agent, [])).toBe('"Build the search box" (a1)')
     expect(finishedAgentLabel('a1', agent, ['CP-1', 'CP-2'])).toBe('"Build the search box" (a1) (its brief named CP-1, CP-2)')
@@ -52,14 +52,6 @@ describe('the sub-agent finish notice (pure)', () => {
     expect(endedWithParent(all, 'p', []).sort()).toEqual(['c1', 'c2', 'g1', 'g2'])
     expect(endedWithParent(all, 'p', ['c2']).sort()).toEqual(['c1', 'g1'])
     expect(endedWithParent(all, 'c1', [])).toEqual(['g1'])
-  })
-  test("a nested agent's stop is its end once its parent ended or its entry was evicted; a direct or unrecorded agent's never", () => {
-    const nested = { ...agent, direct: false, parent: 'p' }
-    expect(endsWithParent({ p: { ...agent, ended: true } }, nested)).toBe(true)
-    expect(endsWithParent({}, nested)).toBe(true)
-    expect(endsWithParent({ p: agent }, nested)).toBe(false)
-    expect(endsWithParent({ p: { ...agent, ended: true } }, agent)).toBe(false)
-    expect(endsWithParent({}, undefined)).toBe(false)
   })
 })
 
@@ -189,33 +181,41 @@ for (const surface of SURFACES) {
         expect(holdReports(d)[0]).toMatchObject({ agent_id: 'c1', event: 'subagent.start' })
       })
 
-      test("it ends with its foreground parent's stop", async ($, on) => {
+      const childTool = ($: any) => $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'c1' } as any)
+
+      test("a foreground parent's stop says nothing of its child: the child, which may be alive, stays held and is told, its hold unreported", async ($, on) => {
         const d = await nested($, on, { background: false })
         await stopAgent($, 'c1')
         await stopAgent($, 'a1')
         await d.clock.settle()
-        expect(holdsNow(d)).not.toContain('c1')
-        expect(holdReports(d)).toHaveLength(1)
+        expect(holdsNow(d)).toContain('c1')
+        expect(holdReports(d)).toEqual([])
+        expect((await childTool($)).deny).toBeDefined()
       })
 
-      test('one mid-turn when its parent ends is not cut off, and ends at its own stop', async ($, on) => {
+      test('a child mid-turn when its background parent ends is not cut off, and neither its own stop nor a parent with no record ends it', async ($, on) => {
         const d = await nested($, on)
         await notice($, FINAL('a1'))
+        await stopAgent($, 'c1')
         await d.clock.settle()
         expect(holdsNow(d)).toContain('c1')
         expect(holdReports(d)).toEqual([])
-        await stopAgent($, 'c1')
+        expect((await childTool($)).deny).toBeDefined()
+        await spawn($, 'c2', { parentAgentId: 'never-recorded' })
+        await startAgent($, 'c2')
+        await stopAgent($, 'c2')
         await d.clock.settle()
-        expect(holdsNow(d)).not.toContain('c1')
-        expect(holdReports(d)).toHaveLength(1)
+        expect(holdsNow(d)).toContain('c2')
+        expect(holdReports(d)).toEqual([])
       })
 
-      test('its own stop while its parent lives ends nothing', async ($, on) => {
-        const d = await nested($, on)
-        await stopAgent($, 'c1')
+      test('a child whose parent stopped and that never ended leaves one small entry, which its eviction from the spawn record ends and reports', async ($, on) => {
+        const d = await nested($, on, { background: false })
+        await stopAgent($, 'a1')
+        for (let i = 0; i < SPAWNED_KEPT; i++) await spawn($, `n${i}`)
         await d.clock.settle()
-        expect(holdsNow(d)).toContain('c1')
-        expect(holdReports(d)).toEqual([])
+        expect(holdsNow(d)).not.toContain('c1')
+        expect(holdReports(d).filter((r: any) => r.agent_id === 'c1')).toHaveLength(1)
       })
     })
 

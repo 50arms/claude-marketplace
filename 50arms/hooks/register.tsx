@@ -15,7 +15,7 @@ import type { Loud } from './bundle/reports'
 import { NO_BEHAVIOR, owe, settleOwed } from './bundle/state'
 import type { Behavior, OwedTaking } from './bundle/state'
 import { stamp as nextStamp } from './context/stamp'
-import { agentsEnded, announcedBy, endedWithParent, endsWithParent, finishedAgentLabel, finishedAgentsText, isRecordWrite, spawnedAfter } from './context/record'
+import { announcedBy, endedWithParent, finishedAgentLabel, finishedAgentsText, isRecordWrite, spawnedAfter } from './context/record'
 import type { FinishedAgent, SpawnedAgents } from './context/record'
 import { FOREGROUND_LOCK_TIMEOUT_MS, foregroundLockArgv, foregroundLockNotice, parseForegroundLockAnswer } from './context/foreground'
 import { heldReason, nextWakeMs, receive, releasedText, splitDue, taskNoticeOf } from './context/interim-notice'
@@ -4055,9 +4055,7 @@ async function onSubagentStop($: any, e: any, next: any) {
   // a background agent's brief stays until its final notice ends it: a stop is no end for it (it fires at every turn's end, and the agent may only be waiting on background work)
   if (id !== null && by !== 'notice') await endBrief($, id)
   // a foreground sub-agent's stop is its real end: a hold it still has is released and reported, its owed texts dropped. A background one's stop fires at every turn end while it lives; its real end is its final notice (finishNoticeLabel). An agent never recorded as spawned has no known end.
-  if (id !== null && agent !== undefined && !agent.background) await endAgentContext($, id)
-  // a nested background agent has no final notice the plugin sees: once its parent's context has ended, its own stop is its end
-  else if (id !== null && agent !== undefined && endsWithParent(await read($, spawnedAgents), agent)) await endAgentContext($, id)
+  if (id !== null && agent !== undefined && !agent.background) await endAgentContext($, id, false)
   const r = await onSubagentChange($, e, next, false)
   // the shells' ends (its own row closes at its turn.complete)
   detach($, '50 Arms shell-end report', reportShellEnds($, 'SubagentStop', e))
@@ -4078,7 +4076,7 @@ async function finishNoticeLabel($: any, notice: TaskNotice | null): Promise<Fin
   const agent = (await read($, spawnedAgents))[notice.taskId]
   if (announcedBy(agent) !== 'notice' || agent === undefined) return []
   // the final notice is a background sub-agent's real end: its holds and owed texts end with it, a hold past the hold line reported
-  await endAgentContext($, notice.taskId)
+  await endAgentContext($, notice.taskId, true)
   if (!(await signedInWithAgent($))) return []
   const cards = (await read($, agentBriefs)).byAgent[notice.taskId] ?? []
   await endBrief($, notice.taskId)
@@ -5638,12 +5636,11 @@ async function takeRetell($: any, key: string): Promise<Retell | null> {
   return taken
 }
 
-// A sub-agent that ended is no context any more: its holds, kept or not, and its owed texts end with it, and a hold that had passed the hold line is reported with its end.
-// The agents it spawned that are not mid-turn end with it (a nested one's end reaches the plugin by no other signal); one that is mid-turn ends at its own next stop (onSubagentStop).
-async function endAgentContext($: any, agentId: string): Promise<void> {
-  const under = endedWithParent(await read($, spawnedAgents), agentId, await read($, runningAgents))
-  const ending = [agentId, ...under]
-  await update($, spawnedAgents, cur => agentsEnded(cur, ending))
+// A sub-agent whose end the engine signalled is no context any more: its holds, kept or not, and its owed and retell texts end with it, and a hold that had passed the hold line is reported with its end.
+// The signals are a foreground agent's own stop, a direct background agent's final notice (which also ends the idle agents under it: the engine sends it only when it has no live background child), and the agent's eviction from `spawnedAgents`.
+// An end only inferred (a nested agent whose parent stopped, a parent with no record) ends nothing: an agent still alive stays held and told, and a dead one leaves a small entry that its eviction ends.
+async function endAgentContext($: any, agentId: string, withChildren: boolean): Promise<void> {
+  const ending = [agentId, ...(withChildren ? endedWithParent(await read($, spawnedAgents), agentId, await read($, runningAgents)) : [])]
   await releaseHolds($, ending, await $.clock.now(), await pluginVersion($), cur => {
     const owed = Object.fromEntries(Object.entries(cur.owed).filter(([key]) => !ending.includes(key)))
     return { ...cur, owed }
@@ -5741,7 +5738,7 @@ export const register: Register = (on, options) => {
       // the spawn's answer is the one place the new agent's id is known before its start: what its finish notice needs is kept under it
       if (typeof started.agentId === 'string' && started.agentId !== '') {
         const parent = typeof e.parentAgentId === 'string' && e.parentAgentId !== '' ? e.parentAgentId : null
-        const spawned = { description: typeof e.description === 'string' ? e.description : '', background: e.background === true, direct: e.parentAgentId === undefined, parent, ended: false }
+        const spawned = { description: typeof e.description === 'string' ? e.description : '', background: e.background === true, direct: e.parentAgentId === undefined, parent }
         let evicted: string[] = []
         await update($, spawnedAgents, cur => {
           const after = spawnedAfter(cur, started.agentId, spawned)
@@ -5749,7 +5746,7 @@ export const register: Register = (on, options) => {
           return after.agents
         })
         // an evicted agent's entry is gone, so nothing could end its context later: it ends here, reported if its hold had passed the hold line
-        for (const gone of evicted) await endAgentContext($, gone)
+        for (const gone of evicted) await endAgentContext($, gone, false)
       }
     }
     return started

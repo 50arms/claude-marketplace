@@ -368,8 +368,8 @@ declare module 'claude-code' {
       // the interim sub-agent notices held back from the model, each with the task id it names and the epoch ms it was first held (see hooks/context/interim-notice.ts).
       heldNotices: { taskId: string; text: string; heldAt: number }[]
       agentBriefs: { pending: { ids: string[]; at: number }[]; byAgent: Record<string, string[]> }
-      // what the plugin kept of each sub-agent at its spawn (description, background, spawned by the main loop, its parent agent, whether its context ended), by agent id, the newest 200 (see hooks/context/record.ts).
-      spawnedAgents: Record<string, { description: string; background: boolean; direct: boolean; parent: string | null; ended: boolean }>
+      // what the plugin kept of each sub-agent at its spawn (description, background, spawned by the main loop, its parent agent), by agent id, the newest 200 (see hooks/context/record.ts).
+      spawnedAgents: Record<string, { description: string; background: boolean; direct: boolean; parent: string | null }>
       // the policy bundle's state: the bundle held, what each agent context was told, the holds, the owed start events and the report queue (see hooks/bundle/state.ts).
       behavior: Behavior
     }
