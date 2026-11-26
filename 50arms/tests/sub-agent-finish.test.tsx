@@ -3,7 +3,7 @@ import "./run-tests-with-npm-test.generated"
 // and that the wording is the bundle's `subagent.stop` text (CP-146).
 import { describe, expect } from 'claude-code/testing'
 
-import { SPAWNED_KEPT, announcedBy, finishedAgentLabel, finishedAgentsText, spawnedAfter } from '../hooks/context/record'
+import { SPAWNED_KEPT, announcedBy, endedWithParent, endsWithParent, finishedAgentLabel, finishedAgentsText, spawnedAfter } from '../hooks/context/record'
 import { INTERIM_NOTE } from '../hooks/context/interim-notice'
 import { test, SURFACES, EVENT_TEXT, bundleEvent, dashboard, deliveredReports, startSession } from './plan-kit'
 
@@ -12,7 +12,7 @@ The session "Shelfwise: search books" you started (local_61d5e678-7063-4899-be62
 </system-reminder>`
 
 describe('the sub-agent finish notice (pure)', () => {
-  const agent = { description: 'Build the search box', background: true, direct: true }
+  const agent = { description: 'Build the search box', background: true, direct: true, parent: null as string | null, ended: false }
   test('it names the agent by description and id and by the cards its brief named, then carries the bundle text as it is', () => {
     expect(finishedAgentLabel('a1', agent, [])).toBe('"Build the search box" (a1)')
     expect(finishedAgentLabel('a1', agent, ['CP-1', 'CP-2'])).toBe('"Build the search box" (a1) (its brief named CP-1, CP-2)')
@@ -30,13 +30,36 @@ describe('the sub-agent finish notice (pure)', () => {
     expect(announcedBy({ ...agent, background: false, direct: false })).toBeNull()
     expect(announcedBy(undefined)).toBeNull()
   })
-  test('the spawn record keeps the newest SPAWNED_KEPT agents, and a respawn of an id replaces it', () => {
+  test('the spawn record keeps the newest SPAWNED_KEPT agents and names the ones it pushed out, and a respawn of an id replaces it', () => {
     let cur: Record<string, typeof agent> = {}
-    for (let i = 0; i < SPAWNED_KEPT + 5; i++) cur = spawnedAfter(cur, `a${i}`, agent)
+    const evicted: string[] = []
+    for (let i = 0; i < SPAWNED_KEPT + 5; i++) {
+      const after = spawnedAfter(cur, `a${i}`, agent)
+      cur = after.agents
+      evicted.push(...after.evicted)
+    }
     expect(Object.keys(cur)).toHaveLength(SPAWNED_KEPT)
+    expect(evicted).toEqual(['a0', 'a1', 'a2', 'a3', 'a4'])
     expect(cur['a0']).toBeUndefined()
     expect(cur[`a${SPAWNED_KEPT + 4}`]).toEqual(agent)
-    expect(spawnedAfter({ a1: agent }, 'a1', { ...agent, description: 'again' })['a1']?.description).toBe('again')
+    const again = spawnedAfter({ a1: agent }, 'a1', { ...agent, description: 'again' })
+    expect(again.agents['a1']?.description).toBe('again')
+    expect(again.evicted).toEqual([])
+  })
+  test('an agent ends with its parent: its idle children and theirs, never a child mid-turn nor what is under it', () => {
+    const at = (parent: string | null) => ({ ...agent, parent, direct: parent === null })
+    const all = { p: at(null), c1: at('p'), c2: at('p'), g1: at('c1'), g2: at('c2'), other: at('x') }
+    expect(endedWithParent(all, 'p', []).sort()).toEqual(['c1', 'c2', 'g1', 'g2'])
+    expect(endedWithParent(all, 'p', ['c2']).sort()).toEqual(['c1', 'g1'])
+    expect(endedWithParent(all, 'c1', [])).toEqual(['g1'])
+  })
+  test("a nested agent's stop is its end once its parent ended or its entry was evicted; a direct or unrecorded agent's never", () => {
+    const nested = { ...agent, direct: false, parent: 'p' }
+    expect(endsWithParent({ p: { ...agent, ended: true } }, nested)).toBe(true)
+    expect(endsWithParent({}, nested)).toBe(true)
+    expect(endsWithParent({ p: agent }, nested)).toBe(false)
+    expect(endsWithParent({ p: { ...agent, ended: true } }, agent)).toBe(false)
+    expect(endsWithParent({}, undefined)).toBe(false)
   })
 })
 
@@ -136,6 +159,80 @@ for (const surface of SURFACES) {
       expect(holdsNow(d)).not.toContain('a1')
       expect(holdReports(d)).toHaveLength(1)
       expect(holdReports(d)[0]).toMatchObject({ agent_id: 'a1', event: 'subagent.start' })
+    })
+
+    describe('a nested background sub-agent (spawned by another sub-agent), which has no final notice of its own the plugin sees', () => {
+      const HOLD = ['w'.repeat(12_000)]
+      // the child holds an undelivered text past the hold line; its parent a1 was spawned by the main loop in the background
+      async function nested($: any, on: any, parent: Record<string, unknown> = {}) {
+        const d = await started($, on)
+        d.world.bundle.events['subagent.start'] = bundleEvent('subagent.start', HOLD, { id: 300, cap: 10_000 })
+        await spawn($, 'a1', parent)
+        await spawn($, 'c1', { parentAgentId: 'a1' })
+        d.world.carrierWriteFails = true
+        await startAgent($, 'c1')
+        expect(holdsNow(d)).toContain('c1')
+        await d.clock.advance(WINDOW)
+        return d
+      }
+
+      test("it ends with its parent's final notice, and its hold past the hold line is reported", async ($, on) => {
+        const d = await nested($, on)
+        await stopAgent($, 'c1')
+        await d.clock.settle()
+        expect(holdsNow(d)).toContain('c1')
+        expect(holdReports(d)).toEqual([])
+        await notice($, FINAL('a1'))
+        await d.clock.settle()
+        expect(holdsNow(d)).not.toContain('c1')
+        expect(holdReports(d)).toHaveLength(1)
+        expect(holdReports(d)[0]).toMatchObject({ agent_id: 'c1', event: 'subagent.start' })
+      })
+
+      test("it ends with its foreground parent's stop", async ($, on) => {
+        const d = await nested($, on, { background: false })
+        await stopAgent($, 'c1')
+        await stopAgent($, 'a1')
+        await d.clock.settle()
+        expect(holdsNow(d)).not.toContain('c1')
+        expect(holdReports(d)).toHaveLength(1)
+      })
+
+      test('one mid-turn when its parent ends is not cut off, and ends at its own stop', async ($, on) => {
+        const d = await nested($, on)
+        await notice($, FINAL('a1'))
+        await d.clock.settle()
+        expect(holdsNow(d)).toContain('c1')
+        expect(holdReports(d)).toEqual([])
+        await stopAgent($, 'c1')
+        await d.clock.settle()
+        expect(holdsNow(d)).not.toContain('c1')
+        expect(holdReports(d)).toHaveLength(1)
+      })
+
+      test('its own stop while its parent lives ends nothing', async ($, on) => {
+        const d = await nested($, on)
+        await stopAgent($, 'c1')
+        await d.clock.settle()
+        expect(holdsNow(d)).toContain('c1')
+        expect(holdReports(d)).toEqual([])
+      })
+    })
+
+    test('an agent pushed out of the spawn record ends at that moment, its hold past the hold line reported', async ($, on) => {
+      const d = await started($, on)
+      d.world.bundle.events['subagent.start'] = bundleEvent('subagent.start', ['w'.repeat(12_000)], { id: 300, cap: 10_000 })
+      await spawn($, 'a0')
+      d.world.carrierWriteFails = true
+      await startAgent($, 'a0')
+      await d.clock.advance(WINDOW)
+      for (let i = 1; i < SPAWNED_KEPT; i++) await spawn($, `a${i}`)
+      expect(holdsNow(d)).toContain('a0')
+      await spawn($, `a${SPAWNED_KEPT}`)
+      await d.clock.settle()
+      expect(holdsNow(d)).not.toContain('a0')
+      expect(holdReports(d)).toHaveLength(1)
+      expect(holdReports(d)[0]).toMatchObject({ agent_id: 'a0', event: 'subagent.start' })
     })
 
     test('a stop of an agent the session never recorded as spawned has no known end: its hold is left', async ($, on) => {

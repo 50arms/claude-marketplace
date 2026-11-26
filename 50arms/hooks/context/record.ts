@@ -11,18 +11,66 @@ const DESCRIPTION_MAX = 80
  * What the plugin keeps of a sub-agent at the moment it is spawned (the `agent.spawn` hook answers its id there): its description, whether it runs
  * in the background, and whether the main loop spawned it (`direct`) rather than another sub-agent.
  */
-export type SpawnedAgent = { description: string; background: boolean; direct: boolean }
+export type SpawnedAgent = {
+  description: string
+  background: boolean
+  direct: boolean
+  /** The agent that spawned it (`null` for the main loop): a nested agent's context ends with its parent's, because no signal reaches the plugin for the nested one alone. */
+  parent: string | null
+  /** The agent's context has ended (a respawn of the same id starts it again). */
+  ended: boolean
+}
 export type SpawnedAgents = Record<string, SpawnedAgent>
 
 // the newest spawns kept: a finished agent may be resumed any time, but never more than this many are remembered
 export const SPAWNED_KEPT = 200
 
-/** The record after a spawn: the agent is the newest, and a respawn (a resume) of an id replaces its entry. */
-export function spawnedAfter(cur: SpawnedAgents, id: string, agent: SpawnedAgent): SpawnedAgents {
+/**
+ * The record after a spawn: the agent is the newest, and a respawn (a resume) of an id replaces its entry. `evicted` names the agents the newest
+ * `SPAWNED_KEPT` pushed out: their entries are gone, so nothing else can ever end their context.
+ */
+export function spawnedAfter(cur: SpawnedAgents, id: string, agent: SpawnedAgent): { agents: SpawnedAgents; evicted: string[] } {
   const { [id]: _replaced, ...rest } = cur
   const next = { ...rest, [id]: agent }
   const ids = Object.keys(next)
-  return ids.length <= SPAWNED_KEPT ? next : Object.fromEntries(ids.slice(ids.length - SPAWNED_KEPT).map(k => [k, next[k] as SpawnedAgent]))
+  if (ids.length <= SPAWNED_KEPT) return { agents: next, evicted: [] }
+  const cut = ids.length - SPAWNED_KEPT
+  return { agents: Object.fromEntries(ids.slice(cut).map(k => [k, next[k] as SpawnedAgent])), evicted: ids.slice(0, cut) }
+}
+
+/** The agents with these ids marked as ended. */
+export function agentsEnded(cur: SpawnedAgents, ids: readonly string[]): SpawnedAgents {
+  const next = { ...cur }
+  for (const id of ids) if (next[id] !== undefined && !next[id].ended) next[id] = { ...next[id], ended: true }
+  return next
+}
+
+/**
+ * The agents whose context ends because `id` ended: its children that are not mid-turn, then theirs. A child that is mid-turn (`running`) may still
+ * be working, so it and everything under it stay: its own stop ends it once its parent has ended (`endsWithParent`).
+ */
+export function endedWithParent(agents: SpawnedAgents, id: string, running: readonly string[]): string[] {
+  const out: string[] = []
+  const seen = new Set<string>([id])
+  const queue = [id]
+  while (queue.length > 0) {
+    const parent = queue.shift() as string
+    for (const [child, agent] of Object.entries(agents)) {
+      if (agent.parent !== parent || seen.has(child)) continue
+      seen.add(child)
+      if (running.includes(child)) continue
+      out.push(child)
+      queue.push(child)
+    }
+  }
+  return out
+}
+
+/** A nested agent's stop is its end once its parent's context has ended (or its parent's entry was evicted): a nested background agent has no final notice the plugin sees. */
+export function endsWithParent(agents: SpawnedAgents, agent: SpawnedAgent | undefined): boolean {
+  if (agent === undefined || agent.parent === null) return false
+  const parent = agents[agent.parent]
+  return parent === undefined || parent.ended
 }
 
 /**
