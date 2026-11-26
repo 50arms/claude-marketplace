@@ -5493,7 +5493,7 @@ async function ensureBundle($: any, key: string, event: string, waitMs: number, 
   return holdContext($, key, event, outcome.failure)
 }
 
-// CP-169, BPR-24: the reconnect of a stale MCP server is a fixed call, so the hook makes it, once per stale-MCP hold: a context whose session already holds one for this reason reuses its answer. The answer
+// the reconnect of a stale MCP server is a fixed call, so the hook makes it, once per stale-MCP hold: a context whose session already holds one for this reason reuses its answer. The answer
 // (`ask`) and the line's next step for this context (the main conversation or a sub-agent) are kept on the hold, so every refusal tells the same thing.
 async function reconnectAsk($: any): Promise<ReconnectResult> {
   const standing = Object.values((await read($, behavior)).holds).find(h => h.reason === 'stale_mcp')
@@ -5509,7 +5509,7 @@ const staleFailure = (failure: Failure, result: ReconnectResult, key: string): F
   values: { ask: result.ask, ...(result.ask === 'unavailable' ? { why: result.why } : {}), next_step: staleMcpNextStep(result.ask, key !== MAIN_KEY) },
 })
 
-// What the hook asks of the desktop app: its reconnect of the plugin's own server (EV-205 has no verdict yet on whether that starts the newest installed MCP, so nothing here relies on it). A session with no `ccd_connectors` server
+// What the hook asks of the desktop app: its reconnect of the plugin's own server (no verdict yet on whether that starts the newest installed MCP, so nothing here relies on it). A session with no `ccd_connectors` server
 // (a dispatched agent, a command-line session) or a refused call is `unavailable`, with the reason it gave: the line then names the restart alone.
 async function requestReconnect($: any): Promise<ReconnectResult> {
   try {

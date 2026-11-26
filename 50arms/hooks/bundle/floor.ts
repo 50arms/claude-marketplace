@@ -33,7 +33,7 @@ export const HOLD_LINES: Record<HoldReason, string> = {
   plugin_outdated: `${HELD_OPENING} The 50 Arms plugin is too old to read them: it must be updated to version {{slot:need_version}} or later (tell the person to update it, then start a new session).`,
   key_revoked: `${HELD_OPENING} This session's 50 Arms key was revoked: the person must sign in again.`,
   relay_broken: `${HELD_OPENING} The relay that tells this session when its instructions change is broken and the check for a change also failed: tell the person to reconnect the 50 Arms dashboard server (/mcp) or start a new session.`,
-  // CP-169: the running MCP server is older than the plugin, so the fetch's `reply_to_file` was refused. What the context does next depends on who it is and on whether the plugin could ask the desktop app to
+  // the running MCP server is older than the plugin, so the fetch's `reply_to_file` was refused. What the context does next depends on who it is and on whether the plugin could ask the desktop app to
   // reconnect the server (`staleMcpNextStep`): the reconnect serves desktop operator sessions only, so a dispatched agent (server `platform`) or a command-line session is told to restart alone.
   stale_mcp: `${HELD_FIRST} {{slot:next_step}}`,
   classifier_refused: `${HELD_OPENING} The permission classifier refused the plugin's own call to 50 Arms: tell the person to allow the plugin's server in their permissions.`,
