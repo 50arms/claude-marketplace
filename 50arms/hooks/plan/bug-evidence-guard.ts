@@ -5,11 +5,11 @@ import { isSignedOut } from './mcp'
 import { PACING_READ_DEADLINE_MS } from './pacing-line'
 import type { PacingEnv } from './pacing-line'
 
-// CP-161: a sub-agent sent to fix a Bug must have a brief citing the Evidence record whose verdict reproduced the failure (DEC-2263 on DX-7774).
-// 50 Arms judges it (POST /api/issues/spawn-check, DX-8140): it reads the card ids and `EV-<n>` refs out of the brief, so a brief naming no Bug card is
+// A sub-agent sent to fix a Bug must have a brief citing the Evidence record whose verdict reproduced the failure.
+// 50 Arms judges it (POST /api/issues/spawn-check): it reads the card ids and `EV-<n>` refs out of the brief, so a brief naming no Bug card is
 // answered `allowed` and passes untouched. The plugin only asks and refuses with the server's own reasons. A check that cannot be answered after
-// It runs INSIDE the pacing guard's `next`, after the slot claim, so a refusal gives the claimed slot back and a server that has not connected is left to the claim's own wait.
 // BUG_CHECK_ATTEMPTS bounded tries REFUSES loudly naming the failure (RULE-21); a signed-out session or a server not connected is left to the slot claim after it, which refuses the same cases loudly.
+// It runs INSIDE the pacing guard's `next`, after the slot claim, so a refusal gives the claimed slot back and a server that has not connected is left to the claim's own wait.
 
 export const SPAWN_CHECK_PATH = '/api/issues/spawn-check'
 export const BUG_CHECK_ATTEMPTS = 3
