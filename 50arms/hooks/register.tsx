@@ -4054,8 +4054,8 @@ async function onSubagentStop($: any, e: any, next: any) {
   const cards = id === null || by !== 'stop' ? [] : ((await read($, agentBriefs)).byAgent[id] ?? [])
   // a background agent's brief stays until its final notice ends it: a stop is no end for it (it fires at every turn's end, and the agent may only be waiting on background work)
   if (id !== null && by !== 'notice') await endBrief($, id)
-  // a sub-agent's own context ends with it: a hold it still has is released and reported, its owed texts dropped (a background agent's notice is not its end)
-  if (id !== null && by !== 'notice') await endAgentContext($, id)
+  // a foreground sub-agent's stop is its real end: a hold it still has is released and reported, its owed texts dropped. A background one's stop fires at every turn end while it lives; its real end is its final notice (finishNoticeLabel). An agent never recorded as spawned has no known end.
+  if (id !== null && agent !== undefined && !agent.background) await endAgentContext($, id)
   const r = await onSubagentChange($, e, next, false)
   // the shells' ends (its own row closes at its turn.complete)
   detach($, '50 Arms shell-end report', reportShellEnds($, 'SubagentStop', e))
@@ -4074,7 +4074,10 @@ async function onSubagentStop($: any, e: any, next: any) {
 async function finishNoticeLabel($: any, notice: TaskNotice | null): Promise<FinishedAgent[]> {
   if (notice === null || notice.interim) return []
   const agent = (await read($, spawnedAgents))[notice.taskId]
-  if (announcedBy(agent) !== 'notice' || agent === undefined || !(await signedInWithAgent($))) return []
+  if (announcedBy(agent) !== 'notice' || agent === undefined) return []
+  // the final notice is a background sub-agent's real end: its holds and owed texts end with it, a hold past the hold line reported
+  await endAgentContext($, notice.taskId)
+  if (!(await signedInWithAgent($))) return []
   const cards = (await read($, agentBriefs)).byAgent[notice.taskId] ?? []
   await endBrief($, notice.taskId)
   return [{ id: notice.taskId, label: finishedAgentLabel(notice.taskId, agent, cards) }]
@@ -5602,15 +5605,17 @@ async function refuseWhileHeld($: any, agentId: unknown, budget: Budget): Promis
   if (ensured.kind === 'held') return refusalOf(ensured.hold, await $.clock.now())
   if (ensured.kind !== 'ready') return null
   const told: string[] = []
+  // a text already told on this call is counted told and reported delivered, so a later failure answers with it and the hold line together, never the hold line alone
+  const refusedWith = (text: string): string => (told.length === 0 ? text : `${OWED_ARRIVED}\n\n${told.join('\n\n')}\n\n${text}`)
   if ((await read($, behavior)).owed[key] !== undefined) {
     const outcome = await tellEvent($, 'tool.before', agentId, budget, { owed: 'only' })
-    if (outcome.kind === 'refused') return outcome.text
+    if (outcome.kind === 'refused') return refusedWith(outcome.text)
     if (outcome.kind === 'texts') told.push(...outcome.entries)
   }
   // each is taken off the hold before it is told, so a failure puts back only itself and the ones not yet tried stay
   for (let again = await takeRetell($, key); again !== null; again = await takeRetell($, key)) {
     const outcome = await tellEvent($, again.event, agentId, budget, { matchers: again.matchers, extra: again.extra, ...(again.mechanisms === null ? {} : { mechanisms: again.mechanisms }) })
-    if (outcome.kind === 'refused') return outcome.text
+    if (outcome.kind === 'refused') return refusedWith(outcome.text)
     if (outcome.kind === 'texts') told.push(...outcome.entries)
   }
   if (told.length === 0) return null

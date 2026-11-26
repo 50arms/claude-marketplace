@@ -559,6 +559,8 @@ export function dashboard(
     // the paths the stand-in MCP answered with the file form, in order; and whether the machine refuses the plugin's write of an over-cap text's carrier file
     repliedAsFile: [] as string[],
     carrierWriteFails: false,
+    // only the carrier files whose path holds this text (an event's name) cannot be written
+    carrierWriteFailsFor: null as string | null,
     replySha256: undefined as string | undefined,
     floorSends: [] as { body: any }[],
     // DX-4234: what the server's `restart_notice` tool answers (DX-4632): `{notice: null}` unless a test sets a JSON answer (`json`), a raw
@@ -1613,7 +1615,7 @@ export function dashboard(
   })
   // a file the plugin writes lands in `world.files`
   on('fs.write', (_$: any, e: any) => {
-    if (world.carrierWriteFails && fsKey(e.path).includes('/behavior-text/')) return { deny: 'EACCES: permission denied' } as any
+    if ((world.carrierWriteFails || (world.carrierWriteFailsFor !== null && fsKey(e.path).includes(world.carrierWriteFailsFor))) && fsKey(e.path).includes('/behavior-text/')) return { deny: 'EACCES: permission denied' } as any
     world.files[fsKey(e.path)] = e.text
     return { value: undefined } as any
   })

@@ -605,23 +605,29 @@ for (const surface of SURFACES) {
         expect((await tool($)).deny).toBeUndefined()
       })
 
-      test('a sub-agent that ends before its owed text arrives has its hold released and, past the hold line, reported with its end', async ($, on) => {
+      test('when a later retell fails, the texts this call already told come with the hold line: nothing counted delivered is dropped', async ($, on) => {
         const d = await started($, on)
-        d.world.bundle.events['subagent.start'] = bundleEvent('subagent.start', ['w'.repeat(12_000)], { id: 300, cap: 10_000 })
+        d.world.bundle.events['tool.before'] = bundleEvent('tool.before', ['b'.repeat(12_000)], { id: 311, cap: 10_000 })
+        d.world.bundle.events['tool.after'] = bundleEvent('tool.after', ['a'.repeat(12_000)], { id: 312, cap: 10_000 })
         await firstPrompt($, 'startup')
         d.world.carrierWriteFails = true
-        await $.classic.SubagentStart(SUB)
-        expect(holdsNow(d)).toContain('a1')
-        await d.clock.advance(RETRY_WINDOW_MS + 10_000)
-        expect(((await tool($, 'a1')).deny as string)).not.toMatch(/are loading/)
-        expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
-        await $.classic.SubagentStop({ ...SUB, stop_hook_active: false, background_tasks: [] } as any)
+        await tool($)
+        // both events failed and are kept; now only the file of tool.after cannot be written
+        d.world.carrierWriteFails = false
+        d.world.carrierWriteFailsFor = '-tool.after-'
+        const refused = (await tool($)).deny as string
+        // tool.before was told on this call (a pointer to its file, reported delivered), and tool.after failed after it: one answer carries both
+        expect(refused).toMatch(/have arrived/)
+        expect(refused).toMatch(/read \/home\/u\/\.config\/danxbot\/behavior-text\/\S+-tool\.before-\S+\.txt/)
+        expect(refused).toMatch(/are loading/)
         await d.clock.settle()
-        expect(holdsNow(d)).not.toContain('a1')
-        const holdReports = reports(d).filter(r => r.kind === 'hold')
-        expect(holdReports).toHaveLength(1)
-        expect(holdReports[0]).toMatchObject({ agent_id: 'a1', event: 'subagent.start' })
-        expect(typeof holdReports[0].ended_at).toBe('string')
+        expect(deliveredReports(d, 'tool.before')).toHaveLength(1)
+        // the one that failed is still owed, and the one told is not told again
+        d.world.carrierWriteFailsFor = null
+        const rest = (await tool($)).deny as string
+        expect(rest).toMatch(/read \/home\/u\/\.config\/danxbot\/behavior-text\/\S+-tool\.after-\S+\.txt/)
+        expect(rest).not.toMatch(/tool\.before/)
+        expect((await tool($)).deny).toBeUndefined()
       })
 
       test('requested endpoints that keep failing while the bundle is current are held past the loading line, not dropped by each bundle answer: the hold line comes, and the hold is reported once, with its end, when the text is delivered', async ($, on) => {

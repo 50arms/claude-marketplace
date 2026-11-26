@@ -96,6 +96,58 @@ for (const surface of SURFACES) {
       expect((await tool($)).deny).toBeUndefined()
     })
 
+    const holdsNow = (d: any) => Object.keys((d.stateWrites.filter((w: any) => w.key === 'behavior').at(-1)?.value as any)?.holds ?? {})
+    const holdReports = (d: any) => d.world.deliveryReports.flatMap((r: any) => r.body.reports).filter((r: any) => r.kind === 'hold')
+    const WINDOW = 130_000
+
+    test("a background sub-agent's context ends at its final notice, not at the stop that ends each of its turns: the hold is kept through the stops and reported with its end at the notice", async ($, on) => {
+      const d = await started($, on)
+      d.world.bundle.events['subagent.start'] = bundleEvent('subagent.start', ['w'.repeat(12_000)], { id: 300, cap: 10_000 })
+      await spawn($, 'a1')
+      d.world.carrierWriteFails = true
+      await startAgent($)
+      expect(holdsNow(d)).toContain('a1')
+      await d.clock.advance(WINDOW)
+      // the turn ends and the agent is still alive: nothing is released or reported
+      await stopAgent($)
+      await d.clock.settle()
+      expect(holdsNow(d)).toContain('a1')
+      expect(holdReports(d)).toEqual([])
+      // its real end is the final notice
+      await notice($, FINAL('a1'))
+      await d.clock.settle()
+      expect(holdsNow(d)).not.toContain('a1')
+      expect(holdReports(d)).toHaveLength(1)
+      expect(holdReports(d)[0]).toMatchObject({ agent_id: 'a1', event: 'subagent.start' })
+      expect(typeof holdReports(d)[0].ended_at).toBe('string')
+    })
+
+    test("a foreground sub-agent's stop is its real end: its hold and owed text are released and the hold, past the hold line, is reported with its end", async ($, on) => {
+      const d = await started($, on)
+      d.world.bundle.events['subagent.start'] = bundleEvent('subagent.start', ['w'.repeat(12_000)], { id: 300, cap: 10_000 })
+      await spawn($, 'a1', { background: false })
+      d.world.carrierWriteFails = true
+      await startAgent($)
+      expect(holdsNow(d)).toContain('a1')
+      await d.clock.advance(WINDOW)
+      expect(holdReports(d)).toEqual([])
+      await stopAgent($)
+      await d.clock.settle()
+      expect(holdsNow(d)).not.toContain('a1')
+      expect(holdReports(d)).toHaveLength(1)
+      expect(holdReports(d)[0]).toMatchObject({ agent_id: 'a1', event: 'subagent.start' })
+    })
+
+    test('a stop of an agent the session never recorded as spawned has no known end: its hold is left', async ($, on) => {
+      const d = await started($, on)
+      d.world.bundle.events['subagent.start'] = bundleEvent('subagent.start', ['w'.repeat(12_000)], { id: 300, cap: 10_000 })
+      d.world.carrierWriteFails = true
+      await startAgent($, 'a9')
+      await stopAgent($, 'a9')
+      await d.clock.settle()
+      expect(holdsNow(d)).toContain('a9')
+    })
+
     test('its final notice carries the finish, naming the agent and the cards its brief named, even after interim pauses and a resume', async ($, on) => {
       await started($, on)
       await spawn($, 'a1', { prompt: 'Build CP-15 on its branch', description: 'Build the search box' })
