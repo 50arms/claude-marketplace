@@ -2298,7 +2298,10 @@ async function abortSignInWatch($: any): Promise<void> {
 }
 
 async function onSessionEnd($: any, e: any, next: any) {
-  if (PROCESS_ENDS.includes(e.reason)) await releaseAgent($)
+  if (PROCESS_ENDS.includes(e.reason)) {
+    await endOpenHolds($)
+    await releaseAgent($)
+  }
   if (e.reason === 'clear' && typeof e.sessionId === 'string') await update($, endedSession, () => e.sessionId)
   // the sign-in watch belongs to the conversation that started it
   if (PROCESS_ENDS.includes(e.reason) || e.reason === 'clear' || e.reason === 'resume') {
@@ -5290,6 +5293,24 @@ async function reportHoldEnd($: any, key: string, hold: Hold, now: number, versi
   const item = holdReport(hold, key === MAIN_KEY ? null : key, version, new Date(now).toISOString())
   await update($, behavior, cur => ({ ...cur, queue: enqueueHold(cur.queue, item, key, now) }))
   detach($, 'Reporting a hold', flushReports($))
+}
+
+// The process ends while a hold's open report is out (`plugin_outdated`, `key_revoked`): the alert 50 Arms opened for it closes only on the hold's end report, and nothing runs after this hook, so the end is reported
+// here, bounded as the agent's release is. Only holds already reported open: a hold never reported (inside its 2 minutes, or an outage no open report was sent for) reports nothing, as it did before the session ended. A session
+// with no key (signed out, revoked) cannot send it: 50 Arms closes the alert of a session that has been silent for good.
+async function endOpenHolds($: any): Promise<void> {
+  const v: PlanView = await read($, view)
+  if (v.phase === 'signed-out' || v.phase === 'key-revoked') return
+  const open = Object.entries((await read($, behavior)).holds).filter(([, hold]) => hold.reported === 'open').map(([key]) => key)
+  if (open.length === 0) return
+  await releaseHolds($, open, await $.clock.now(), await pluginVersion($), cur => cur, true)
+  await withinDeadline($, AGENT_RELEASE_DEADLINE_MS, flushDueReports($), () => undefined)
+}
+
+// The queue's due reports sent, the ones this call enqueued included: a send already in flight began before them and does not carry them.
+async function flushDueReports($: any): Promise<void> {
+  await flushReports($)
+  if (dueRequests((await read($, behavior)).queue, await $.clock.now()).length > 0) await flushReports($)
 }
 
 async function queueFloorIfStale($: any, bundle: Bundle, version: string): Promise<void> {

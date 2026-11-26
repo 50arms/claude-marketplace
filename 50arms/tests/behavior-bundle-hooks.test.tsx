@@ -642,6 +642,69 @@ for (const surface of SURFACES) {
       expect(holdKeys(d)).toEqual([])
     })
 
+    // DX-8223: the process ends while a hold's open report is out: its alert episode in 50 Arms closes only on the end report, and nothing runs after the session's end hook, so the end report is sent inside it
+    describe('a session that ends while it holds', () => {
+      const PROCESS_END = { reason: 'logout' } as const
+      const endSession = ($: any, d: any, e: { reason: string } = PROCESS_END) => $.session.end({ ...e, sessionId: d.world.sessionId } as any)
+      const heldOutdated = async ($: any, d: any) => {
+        d.world.bundle.minPlugin = '9.0.0'
+        await $.prompt.submit({ text: 'hello' })
+        await d.clock.advance(RETRY_WINDOW_MS + 1_000)
+        expect((await tool($)).deny).toMatch(/9\.0\.0/)
+        await d.clock.settle()
+      }
+
+      test('a hold already reported open sends its end report before the end hook returns, once', async ($, on) => {
+        on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
+        const d = await started($, on)
+        await heldOutdated($, d)
+        const open = reports(d).filter(r => r.kind === 'hold')
+        expect(open).toHaveLength(1)
+        expect(open[0].ended_at).toBeUndefined()
+        await endSession($, d)
+        // no settle: the process is gone once the hook returns
+        const sent = reports(d).filter(r => r.kind === 'hold')
+        expect(sent.map(r => r.ended_at !== undefined)).toEqual([false, true])
+        expect(sent[1]).toMatchObject({ reason: 'plugin_outdated', agent_id: null, started_at: open[0].started_at })
+        await d.clock.advance(10 * MIN)
+        await d.clock.settle()
+        expect(reports(d).filter(r => r.kind === 'hold')).toHaveLength(2)
+      })
+
+      test('a hold inside its loading window reports nothing', async ($, on) => {
+        on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
+        const d = await started($, on)
+        d.world.bundle.override = { status: 503, body: { error: 'dashboard_unreachable' } }
+        await firstPrompt($, 'startup')
+        await d.clock.advance(30_000)
+        await endSession($, d)
+        await d.clock.settle()
+        expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
+      })
+
+      // an outage hold past the hold line is reported once it ends (`reportStepOf`), never open: the session's end is no end of that outage
+      test('a hold past the hold line that was never reported open reports nothing', async ($, on) => {
+        on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
+        const d = await started($, on)
+        d.world.bundle.override = { status: 503, body: { error: 'dashboard_unreachable' } }
+        await firstPrompt($, 'startup')
+        await d.clock.advance(RETRY_WINDOW_MS + 1_000)
+        expect((await tool($)).deny).toMatch(/CRITICAL/)
+        await endSession($, d)
+        await d.clock.settle()
+        expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
+      })
+
+      test('a /clear carries the open hold across and reports nothing', async ($, on) => {
+        on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }) as any)
+        const d = await started($, on)
+        await heldOutdated($, d)
+        await endSession($, d, { reason: 'clear' })
+        await d.clock.settle()
+        expect(reports(d).filter(r => r.kind === 'hold')).toHaveLength(1)
+      })
+    })
+
     // the briefing slots of an after-compaction start read the dashboard: a read past the hook's deadline gives the start up before anything is counted told, so no delivery is reported that nobody saw
     test('a start whose briefing slots read past the deadline is owed, with nothing told or reported for it, and the next prompt tells it once', async ($, on) => {
       const d = await started($, on)
