@@ -199,6 +199,9 @@ export type FloorReason = 'signed_out' | 'loading' | 'dashboard_unreachable' | '
 export type HoldReason = Exclude<FloorReason, 'signed_out' | 'loading'>
 
 // A hold: since when (epoch ms, the first failure of this context's run of failures), why, and what its report needs.
+// a plugin event whose delivery failed and that no start event owes: told again, with the same matchers and slots, at the context's next tool call
+export type Retell = { event: string; matchers: Record<string, string>; extra: Record<string, string>; mechanisms: string[] | null }
+
 export type Hold = {
   reason: HoldReason
   detail: string
@@ -211,6 +214,8 @@ export type Hold = {
   reported: 'none' | 'open' | 'ended'
   // set when the hold was placed for a text that could not be delivered while the bundle was current (a failed fetch of the requested endpoints, a file that could not be written, a shape error found while deciding): a bundle answer does not end it, only the delivery of the text it owes does
   undelivered?: true
+  // the events of this context that failed to be delivered and are not owed (a tool or sub-agent stop text): told again at its next tool call, and the hold ends only when none is left
+  retell?: Retell[]
 }
 
 export type Holds = Record<string, Hold>

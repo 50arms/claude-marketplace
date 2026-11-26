@@ -3,9 +3,9 @@
 // reason. The hold ends only on a successful fetch. Pure: register.tsx reads the answers and applies the verdicts.
 
 import type { FloorReason, HoldReason } from './floor'
-import type { Hold, Holds } from '../../types'
+import type { Hold, Holds, Retell } from '../../types'
 
-export type { Hold, Holds }
+export type { Hold, Holds, Retell }
 import { floorText } from './floor'
 
 // How long the plugin keeps asking after the first failure before the loading line becomes the hold line.
@@ -70,13 +70,22 @@ export function failureOf(f: FetchFailure): Failure {
 export const NO_HOLDS: Holds = {}
 
 // A failure for a context: a new hold, or the same hold refreshed with the newest reason (the time it began stays the first failure's). `undelivered`: the failure is a text that could not be delivered, which a hold keeps once it has it.
-export function holdOn(holds: Holds, key: string, failure: Failure, event: string, now: number, undelivered = false): Holds {
+export function holdOn(holds: Holds, key: string, failure: Failure, event: string, now: number, undelivered = false, retell: Retell | null = null): Holds {
   const held = holds[key]
   const since = held?.since ?? now
   const startedAt = held?.startedAt ?? new Date(now).toISOString()
   const keep = undelivered || held?.undelivered === true ? ({ undelivered: true } as const) : {}
-  return { ...holds, [key]: { reason: failure.reason, detail: failure.detail, values: failure.values, since, startedAt, event: held?.event ?? event, reported: held?.reported ?? 'none', ...keep } }
+  const retells = retell === null ? (held?.retell ?? []) : addRetell(held?.retell ?? [], retell)
+  return { ...holds, [key]: { reason: failure.reason, detail: failure.detail, values: failure.values, since, startedAt, event: held?.event ?? event, reported: held?.reported ?? 'none', ...keep, ...(retells.length === 0 ? {} : { retell: retells }) } }
 }
+
+const sameRetell = (a: Retell, b: Retell): boolean => a.event === b.event && JSON.stringify(a.matchers) === JSON.stringify(b.matchers)
+
+// the events to tell again: one per (event, matchers), the newest moment's slots
+export const addRetell = (list: readonly Retell[], add: Retell): Retell[] => [...list.filter(r => !sameRetell(r, add)), add]
+
+// the list without the event told now (a text of the same event and matchers told since supersedes the failed one)
+export const dropRetell = (list: readonly Retell[], event: string, matchers: Record<string, string>): Retell[] => list.filter(r => !sameRetell(r, { event, matchers, extra: {}, mechanisms: null }))
 
 export function release(holds: Holds, key: string): { holds: Holds; ended: Hold | null } {
   const held = holds[key]

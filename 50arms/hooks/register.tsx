@@ -8,8 +8,8 @@ import { sha256Hex } from './bundle/sha256'
 import { BUNDLE_PATH, BUNDLE_POLL_MS, BundleShapeError, FLOOR_PATH, REPORTS_PATH, REQUESTED_ENDPOINTS_PATH, bundleFileOf, bundleQuery, changeSignalOf, decide, deliveredText, entriesOf, floorIsStale, isCurrent, mainContext, namedSlots, readBundleBody, readRequestedEndpointsBody, relayStreams, requestedEndpointsQuery, rewindTold, startsNewContext } from './bundle/bundle'
 import type { Bundle, BundleComputed, BundleFile, BundleRead, ChangeSignal, Decision, Delivery, Entry, Told } from './bundle/bundle'
 import { SIGN_IN_INVITATION, floorBody } from './bundle/floor'
-import { OWED_ARRIVED, failureOf as fetchFailureOf, holdOn, holdReport, leavesQueue, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from './bundle/hold'
-import type { Failure, Hold } from './bundle/hold'
+import { OWED_ARRIVED, dropRetell, failureOf as fetchFailureOf, holdOn, holdReport, leavesQueue, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from './bundle/hold'
+import type { Failure, Hold, Retell } from './bundle/hold'
 import { dueRequests, deliveryItem, enqueueDelivery, enqueueFloor, enqueueHold, failureLine, bandLine, hasFloorPending, settleFailure, settleOk, toTell } from './bundle/reports'
 import type { Loud } from './bundle/reports'
 import { NO_BEHAVIOR, owe, settleOwed } from './bundle/state'
@@ -3259,7 +3259,10 @@ async function takeFinishedAgents($: any): Promise<FinishedAgent[]> {
 async function subagentStopEntries($: any, budget: Budget, extra: FinishedAgent[] = []): Promise<string[]> {
   const finished = [...(await takeFinishedAgents($)), ...extra]
   if (finished.length === 0) return []
-  const texts = textsOf(await tellEvent($, 'subagent.stop', null, budget, { extra: { sub_agent_id: finished.map(f => f.id).join(', ') } }))
+  const outcome = await tellEvent($, 'subagent.stop', null, budget, { extra: { sub_agent_id: finished.map(f => f.id).join(', ') } })
+  // a delivery that failed is told as the hold line and kept on the hold to be told again, never dropped
+  if (outcome.kind === 'refused') return [outcome.text]
+  const texts = textsOf(outcome)
   return texts.length === 0 ? [] : [finishedAgentsText(finished.map(f => f.label), texts.join('\n\n'))]
 }
 
@@ -3552,8 +3555,9 @@ async function toolBundleTexts($: any, e: any, budget: Budget): Promise<string[]
   if (typeof e.command === 'string') matchers.tool_command = e.command
   const path = typeof e.file_path === 'string' ? e.file_path : typeof e.path === 'string' ? e.path : null
   if (path !== null) matchers.tool_path = path
-  const texts = [...textsOf(await tellEvent($, 'tool.before', e.agentId, budget, { matchers })), ...textsOf(await tellEvent($, 'tool.after', e.agentId, budget, { matchers }))]
-  if (e.tool === 'Skill' && typeof e.skill === 'string') texts.push(...textsOf(await tellEvent($, 'skill.loaded', e.agentId, budget, { extra: { skill_name: e.skill } })))
+  // a delivery that failed is told as the hold line (textsOrRefusal) and kept on the hold to be told again, never dropped
+  const texts = [...textsOrRefusal(await tellEvent($, 'tool.before', e.agentId, budget, { matchers })), ...textsOrRefusal(await tellEvent($, 'tool.after', e.agentId, budget, { matchers }))]
+  if (e.tool === 'Skill' && typeof e.skill === 'string') texts.push(...textsOrRefusal(await tellEvent($, 'skill.loaded', e.agentId, budget, { extra: { skill_name: e.skill } })))
   return texts
 }
 
@@ -4050,6 +4054,8 @@ async function onSubagentStop($: any, e: any, next: any) {
   const cards = id === null || by !== 'stop' ? [] : ((await read($, agentBriefs)).byAgent[id] ?? [])
   // a background agent's brief stays until its final notice ends it: a stop is no end for it (it fires at every turn's end, and the agent may only be waiting on background work)
   if (id !== null && by !== 'notice') await endBrief($, id)
+  // a sub-agent's own context ends with it: a hold it still has is released and reported, its owed texts dropped (a background agent's notice is not its end)
+  if (id !== null && by !== 'notice') await endAgentContext($, id)
   const r = await onSubagentChange($, e, next, false)
   // the shells' ends (its own row closes at its turn.complete)
   detach($, '50 Arms shell-end report', reportShellEnds($, 'SubagentStop', e))
@@ -5391,11 +5397,11 @@ async function ensureBundle($: any, key: string, event: string, waitMs: number, 
 }
 
 // An agent context with no current bundle: held with the failure (a new hold, or the standing one refreshed), kept asking for, and its report opened once the hold line starts.
-async function holdContext($: any, key: string, event: string, failure: Failure, undelivered = false): Promise<{ kind: 'held'; hold: Hold }> {
+async function holdContext($: any, key: string, event: string, failure: Failure, undelivered = false, retell: Retell | null = null): Promise<{ kind: 'held'; hold: Hold }> {
   const at = await $.clock.now()
   let hold!: Hold
   await update($, behavior, cur => {
-    const holds = holdOn(cur.holds, key, failure, event, at, undelivered)
+    const holds = holdOn(cur.holds, key, failure, event, at, undelivered, retell)
     hold = holds[key] as Hold
     return { ...cur, holds }
   })
@@ -5559,13 +5565,24 @@ async function tellEvent($: any, event: string, agentId: unknown, budget: Budget
     // the events owed again are recorded before the hold is placed: a hold for an owed event survives bundle answers until that event is delivered (the bundle is current, so nothing else would end it, and a hold every answer dropped would never leave the loading line)
     const owedAgain = moment.owes === true ? [...owed, event] : owed
     await update($, behavior, cur => ({ ...cur, owed: owedAgain.reduce((acc, o) => owe(acc, key, o), cur.owed) }))
-    const held = await holdContext($, key, event, { reason: 'fetch_failed', detail: err.message.slice(0, CALL_ERROR_MAX), values: {} }, owedAgain.length > 0)
+    // an event no start owes (a tool or sub-agent stop text, a prompt's) is kept on the hold to be told again at the context's next tool call: no failed delivery is dropped
+    const retell: Retell | null = taking === 'only' || moment.owes === true ? null : { event, matchers: moment.matchers ?? {}, extra: moment.extra ?? {}, mechanisms: moment.mechanisms === undefined ? null : [...moment.mechanisms] }
+    const held = await holdContext($, key, event, { reason: 'fetch_failed', detail: err.message.slice(0, CALL_ERROR_MAX), values: {} }, true, retell)
     return { kind: 'refused', text: refusalOf(held.hold, await $.clock.now()) }
   }
   // reported only once the entries are delivered: a delivery whose file could not be written was never made
   for (const { d, at } of made) await update($, behavior, cur => ({ ...cur, queue: enqueueDelivery(cur.queue, deliveryItem(bundle.version, d, new Date(at).toISOString()), key, at) }))
   // the owed event this call took is delivered: a hold kept for it ends, reported as any hold is
-  if ((await read($, behavior)).holds[key]?.undelivered === true && (await read($, behavior)).owed[key] === undefined) await releaseHolds($, [key], await $.clock.now(), await pluginVersion($), cur => cur, true)
+  // a text of this event and these matchers told now supersedes one that failed before
+  if (taking !== 'only') await update($, behavior, cur => {
+    const held = cur.holds[key]
+    if (held?.retell === undefined) return cur
+    const { retell: _was, ...rest } = held
+    const left = dropRetell(held.retell, event, moment.matchers ?? {})
+    return { ...cur, holds: { ...cur.holds, [key]: left.length === 0 ? rest : { ...rest, retell: left } } }
+  })
+  const after = await read($, behavior)
+  if (after.holds[key]?.undelivered === true && after.owed[key] === undefined && after.holds[key]?.retell === undefined) await releaseHolds($, [key], await $.clock.now(), await pluginVersion($), cur => cur, true)
   if (rendered.length > 0) detach($, 'Reporting what the plugin delivered', flushReports($))
   return { kind: 'texts', entries: rendered }
 }
@@ -5577,18 +5594,49 @@ const textsOf = (outcome: EventOutcome): string[] => (outcome.kind === 'texts' ?
 const textsOrRefusal = (outcome: EventOutcome): string[] => (outcome.kind === 'refused' ? [outcome.text] : textsOf(outcome))
 
 // A tool call of a held context is refused with the loading or the hold line, and a context whose owed start texts just arrived reads them as the refusal of its next call (so it reads them, then retries the step).
-// That refusal tells the owed events only: the tool event's own texts are told with the result of the call that runs.
+// That refusal tells the owed events, and the events whose delivery failed and that no start owes (the hold's `retell`), one at a time with the moment they failed on; the tool event's own texts are told with the result of the call that runs.
 async function refuseWhileHeld($: any, agentId: unknown, budget: Budget): Promise<string | null> {
   if (!(await signedInWithAgent($))) return null
   const key = agentKeyOf(agentId)
   const ensured = await ensureBundle($, key, 'tool.before', BUNDLE_WAIT_MS, budget)
   if (ensured.kind === 'held') return refusalOf(ensured.hold, await $.clock.now())
   if (ensured.kind !== 'ready') return null
-  if ((await read($, behavior)).owed[key] === undefined) return null
-  const outcome = await tellEvent($, 'tool.before', agentId, budget, { owed: 'only' })
-  if (outcome.kind === 'refused') return outcome.text
-  if (outcome.kind !== 'texts' || outcome.entries.length === 0) return null
-  return `${OWED_ARRIVED}\n\n${outcome.entries.join('\n\n')}`
+  const told: string[] = []
+  if ((await read($, behavior)).owed[key] !== undefined) {
+    const outcome = await tellEvent($, 'tool.before', agentId, budget, { owed: 'only' })
+    if (outcome.kind === 'refused') return outcome.text
+    if (outcome.kind === 'texts') told.push(...outcome.entries)
+  }
+  // each is taken off the hold before it is told, so a failure puts back only itself and the ones not yet tried stay
+  for (let again = await takeRetell($, key); again !== null; again = await takeRetell($, key)) {
+    const outcome = await tellEvent($, again.event, agentId, budget, { matchers: again.matchers, extra: again.extra, ...(again.mechanisms === null ? {} : { mechanisms: again.mechanisms }) })
+    if (outcome.kind === 'refused') return outcome.text
+    if (outcome.kind === 'texts') told.push(...outcome.entries)
+  }
+  if (told.length === 0) return null
+  return `${OWED_ARRIVED}\n\n${told.join('\n\n')}`
+}
+
+async function takeRetell($: any, key: string): Promise<Retell | null> {
+  let taken: Retell | null = null
+  await update($, behavior, cur => {
+    const held = cur.holds[key]
+    const first = held?.retell?.[0]
+    if (held === undefined || first === undefined) return cur
+    taken = first
+    const { retell: _all, ...rest } = held
+    const left = (held.retell as Retell[]).slice(1)
+    return { ...cur, holds: { ...cur.holds, [key]: left.length === 0 ? rest : { ...rest, retell: left } } }
+  })
+  return taken
+}
+
+// A sub-agent that ended is no context any more: its holds, kept or not, and its owed texts end with it, and a hold that had passed the hold line is reported with its end.
+async function endAgentContext($: any, agentId: string): Promise<void> {
+  await releaseHolds($, [agentId], await $.clock.now(), await pluginVersion($), cur => {
+    const { [agentId]: _owed, ...owed } = cur.owed
+    return { ...cur, owed }
+  }, true)
 }
 
 // the sources of the live data a start after a compaction or a clear fills in, one function each so a slot reads only what it names

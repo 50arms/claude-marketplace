@@ -20,6 +20,7 @@ for (const surface of SURFACES) {
     async function started($: any, on: any, options: Parameters<typeof dashboard>[1] = {}) {
       on('classic.SessionStart', () => ({}) as any)
       on('classic.SubagentStart', () => ({}) as any)
+      on('classic.SubagentStop', () => ({}) as any)
       on('classic.Stop', () => ({}) as any)
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       const d = dashboard(on, options)
@@ -572,6 +573,55 @@ for (const surface of SURFACES) {
         expect(d.world.requestedEndpointReads).toHaveLength(1)
         await d.clock.settle()
         expect(deliveredReports(d, 'session.after_compaction')).toHaveLength(1)
+      })
+
+      const holdsNow = (d: any) => Object.keys((d.stateWrites.filter((w: any) => w.key === 'behavior').at(-1)?.value as any)?.holds ?? {})
+
+      test('a tool text no start owes whose file cannot be written is told as the hold line, kept on the hold and told again at the next tool call, and the hold is reported once when it is delivered', async ($, on) => {
+        const d = await started($, on)
+        d.world.bundle.events['tool.after'] = bundleEvent('tool.after', ['y'.repeat(12_000)], { id: 310, cap: 10_000 })
+        await firstPrompt($, 'startup')
+        d.world.carrierWriteFails = true
+        // the call that met the failure shows the hold line with its result, never nothing
+        const first = (await tool($)) as any
+        expect((first.context ?? []).join('\n')).toMatch(/are loading/)
+        expect(holdsNow(d)).toEqual(['main'])
+        // past the window the next call is refused with the hold line, the text still owed to the agent
+        await d.clock.advance(RETRY_WINDOW_MS + 10_000)
+        const refused = (await tool($)).deny as string
+        expect(refused).not.toMatch(/are loading/)
+        expect(refused).toContain('could not be saved to a file')
+        expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
+        d.world.carrierWriteFails = false
+        const arrived = (await tool($)).deny as string
+        expect(arrived).toMatch(/have arrived/)
+        expect(arrived).toMatch(/It is \d+ characters: read \/home\/u\/\.config\/danxbot\/behavior-text\/\S+\.txt/)
+        await d.clock.settle()
+        const holdReports = reports(d).filter(r => r.kind === 'hold')
+        expect(holdReports).toHaveLength(1)
+        expect(holdReports[0]).toMatchObject({ reason: 'fetch_failed', event: 'tool.after', agent_id: null })
+        expect(typeof holdReports[0].ended_at).toBe('string')
+        expect(holdsNow(d)).toEqual([])
+        expect((await tool($)).deny).toBeUndefined()
+      })
+
+      test('a sub-agent that ends before its owed text arrives has its hold released and, past the hold line, reported with its end', async ($, on) => {
+        const d = await started($, on)
+        d.world.bundle.events['subagent.start'] = bundleEvent('subagent.start', ['w'.repeat(12_000)], { id: 300, cap: 10_000 })
+        await firstPrompt($, 'startup')
+        d.world.carrierWriteFails = true
+        await $.classic.SubagentStart(SUB)
+        expect(holdsNow(d)).toContain('a1')
+        await d.clock.advance(RETRY_WINDOW_MS + 10_000)
+        expect(((await tool($, 'a1')).deny as string)).not.toMatch(/are loading/)
+        expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
+        await $.classic.SubagentStop({ ...SUB, stop_hook_active: false, background_tasks: [] } as any)
+        await d.clock.settle()
+        expect(holdsNow(d)).not.toContain('a1')
+        const holdReports = reports(d).filter(r => r.kind === 'hold')
+        expect(holdReports).toHaveLength(1)
+        expect(holdReports[0]).toMatchObject({ agent_id: 'a1', event: 'subagent.start' })
+        expect(typeof holdReports[0].ended_at).toBe('string')
       })
 
       test('requested endpoints that keep failing while the bundle is current are held past the loading line, not dropped by each bundle answer: the hold line comes, and the hold is reported once, with its end, when the text is delivered', async ($, on) => {
