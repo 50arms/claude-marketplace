@@ -3790,8 +3790,9 @@ async function sessionContext($: any, start: NonNullable<PendingStart>, budget: 
     if (plan.kind !== 'failed' && plan.kind !== 'unreachable') await update($, mantraOwed, () => plan.kind === 'signed-out' || plan.kind === 'silent')
     // the bundle read waits only for what is left of the deadline: a lookup that ended after it would decide the start (count its once-only texts told) with no hook left to show them
     const left = deadlineAt - (await $.clock.now())
-    // the plan read has said the session is signed in: a start given up from here is owed on that answer, whatever the view or the connection record say (`fault` owes only on those)
-    const gaveUp = async (): Promise<StartReads> => ({ line: await owedStart($, event, timeoutFailure(await relayDownOf($))), askRestart: false })
+    // the plan read has said the session is signed in: a start given up from here, with the hook still waiting, is owed on that answer, whatever the view or the connection record say (`fault` owes only on those).
+    // Once the deadline fallback has run (`expired`) it is the one owner of the start: a read that answers after it owes and holds nothing, or a start already told would be owed again
+    const gaveUp = async (): Promise<StartReads | null> => (expired ? null : { line: await owedStart($, event, timeoutFailure(await relayDownOf($))), askRestart: false })
     const signedIn = plan.kind === 'connected' || plan.kind === 'not-connected'
     if (expired || left <= 0) return signedIn ? gaveUp() : null
     if (signedIn) {

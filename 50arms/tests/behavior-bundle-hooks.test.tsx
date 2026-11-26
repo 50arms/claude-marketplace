@@ -349,6 +349,24 @@ for (const surface of SURFACES) {
       expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
     })
 
+    // the start is owed in one place: the deadline fallback. A plan read that answers after it, when the start was owed and told long since, owes and holds nothing
+    test('a start owed at the deadline and told on the next prompt is not owed again when its plan read answers later', async ($, on) => {
+      const d = await started($, on)
+      d.holdApi(20_000)
+      const pending = firstPrompt($, 'startup')
+      await d.clock.advance(CONTEXT_DEADLINE_MS + 500)
+      await d.clock.settle()
+      expect(((await pending).context ?? []).join('\n')).toMatch(/loading/)
+      expect(((await $.prompt.submit({ text: 'again' })).context ?? []).join('\n')).toContain(EVENT_TEXT('session_start'))
+      // the held plan read answers now, after the start was told
+      await d.clock.advance(30_000)
+      await d.clock.settle()
+      expect((await tool($)).deny).toBeUndefined()
+      expect(((await $.prompt.submit({ text: 'more' })).context ?? []).join('\n')).not.toContain(EVENT_TEXT('session_start'))
+      await d.clock.settle()
+      expect(deliveredReports(d, 'session.start')).toHaveLength(1)
+    })
+
     // one release for every hold, by what the hold had reported: a hold whose open report went out (an outdated plugin) is closed with its end when a signed-out answer lets it go, or the alert 50 Arms opened for it never closes
     test('a signed-out answer ends a hold whose open report was sent with an end report', async ($, on) => {
       const d = await started($, on)
