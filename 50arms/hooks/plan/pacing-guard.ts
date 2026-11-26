@@ -191,7 +191,7 @@ export function designerRefusal(grade: DesignerGrade, shortfall: string, types: 
 
 // Why a refusal cannot name an agent type: the agent files could not be listed. The start is still refused.
 export function ownAgentsFailedReason(shortfall: string, failure: string): string {
-  return `${shortfall} The plugin's agent types could not be listed (${failure}), so the start is refused without naming one: use one of the plugin's worker agent types of the grade's model and effort or higher.`
+  return `${shortfall} The plugin's agent types could not be listed (${failure}), so the start is refused without naming one: use one of the plugin's worker agent types at the floor above.`
 }
 
 // The model a spawn runs on if left alone: a fork always inherits the parent's; else the call's `model` (the Agent tool's parameter, which outranks the

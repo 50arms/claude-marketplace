@@ -397,8 +397,10 @@ export function dashboard(
     usageReadFails?: string
     // DX-4340: what GET /api/pacing/line answers (the session's pacing verdict and line): a body (any shape) or an error status; the dashboard's 404 (unrouted) by default
     pacingLine?: { body: unknown } | { status: number }
-    // CP-167: the board's plan-design review grade the gate instruction route answers (model and effort; opus at high by default), or an error status
+    // the board's plan-design review grade the gate instruction route answers (model and effort; opus at high by default), or an error status
     designerGrade?: { model: unknown; effort: unknown } | { status: number }
+    // the plugin's agent folder cannot be listed
+    agentListFails?: boolean
     // DX-4631: each pacing line read answers only after this long on the harness clock (a slow or hung dashboard); the read is counted when it starts
     pacingHoldMs?: number
     // DX-5593 (C1): what DELETE /api/pacing/agents/claim (the claim given back) answers instead of the real release: an error status, or any body (a 200)
@@ -1126,7 +1128,7 @@ export function dashboard(
       if (e.args.background !== true) unmarked.push(`${e.args.method} ${e.args.path}`)
       serverPauseRule(e.args)
     }
-    // CP-167: what the spawn guard reads to learn a designer's floor: the plan-design review grade of the card's board
+    // what the spawn guard reads to learn a designer's floor: the plan-design review grade of the card's board
     if (e.server === SERVER && e.tool === '50arms_api' && e.args.method === 'GET' && /^\/api\/issues\/[^/]+\/quality-gates\/plan-design\/instruction$/.test(e.args.path)) {
       designerGradeReads.push(e.args.path)
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
@@ -1663,6 +1665,7 @@ export function dashboard(
   })
   // a directory listing from the fixture's disk: the first path segment under it of every file held there. An entry is a dir when something lies deeper or its text is empty
   on('fs.list', (_$: any, e: any) => {
+    if (options.agentListFails && fsKey(e.path).endsWith('/agents')) return { deny: 'EIO: the agent folder cannot be listed' } as any
     const dir = fsKey(e.path).replace(/\/$/, '')
     const kinds = new Map<string, 'file' | 'dir'>()
     for (const [path, text] of Object.entries(world.files)) {

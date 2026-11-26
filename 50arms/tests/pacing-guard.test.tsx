@@ -5,7 +5,7 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import { PACED_STOP, REFUSAL_PREFIX, designerFloor, agentFileEffort, agentFileModel, decideSpawn, denyReason, designerCardOf, designerRefusal, designerShortfall, isDesignerBrief, isTight, ownAgentFile, requestedModelOf, spawnGuard, tierOf } from '../hooks/plan/pacing-guard'
-// CP-167: boards' plan-design review grades the designer floor follows
+// boards' plan-design review grades the designer floor follows
 const SONNET_MEDIUM = { model: 'sonnet', effort: 'medium' } as const
 const OPUS_HIGH = { model: 'opus', effort: 'high' } as const
 
@@ -142,7 +142,7 @@ describe('decideSpawn (the decision table)', () => {
     }
   })
 
-  // CP-167: the floor is the board's plan-design review grade, never a fixed model
+  // the floor is the board's plan-design review grade, never a fixed model
 
   test('a designer below the grade on model is refused with a reason naming the grade, what it runs on and what to change; it is not a pacing refusal', () => {
     for (const model of ['haiku', 'claude-haiku-5-5']) {
@@ -197,7 +197,7 @@ describe('decideSpawn (the decision table)', () => {
   })
 
   test('the card a designer brief names is the word after the profile on its first line', () => {
-    expect(designerCardOf('gate-designer CP-167\n\nDraw.')).toBe('CP-167')
+    expect(designerCardOf('gate-designer ABC-12\n\nDraw.')).toBe('ABC-12')
     expect(designerCardOf('\n gate-designer  CP-1 extra')).toBe('CP-1')
     expect(designerCardOf('gate-designer ')).toBeNull()
     expect(designerCardOf('work CP-1')).toBeNull()
@@ -398,6 +398,15 @@ describe('the agent.spawn hook', () => {
     delete d.world.files[agentFile('worker-opus-high')]
     delete d.world.files[agentFile('worker-fable-high')]
     expect((await spawn($, { ...DESIGN, subagentType: '50arms:worker-sonnet-medium' })).deny).toMatch(/None of the plugin's agent types runs at that floor/)
+  })
+
+  test('an agent folder that cannot be listed still refuses the start, naming that', async ($, on) => {
+    const d = await session($, on, { pacingLine: { body: wire({ budget: 12, sub_agents: 5 }) }, designerGrade: SONNET_MEDIUM, agentListFails: true })
+    seed(d, 'worker-sonnet-medium', 'sonnet', 'medium')
+    const r = await spawn($, { ...DESIGN, subagentType: '50arms:worker-sonnet-medium' })
+    expect(r.deny).toMatch(/agent types could not be listed (.*cannot be listed)/)
+    expect(r.deny).toContain('at the floor above')
+    expect(d.claimsAllowed).toEqual([])
   })
 
   test('a grade the plugin cannot read refuses the designer start, with no default floor and no claim', async ($, on) => {
