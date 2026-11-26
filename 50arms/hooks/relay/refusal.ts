@@ -36,15 +36,24 @@ export function classifierRefusal(message: string): Refusal | null {
   return CLASSIFIER_MARK.test(message) ? { detail: message, fix: CLASSIFIER_FIX } : null
 }
 
-// a 50 Arms MCP from before the release that added `background` refuses the `background` key the hooks send with each 50arms_api call (a strict schema:
-// MCP error -32602, `unrecognized_keys`, `keys: ["background"]`). The call is not retried without the key (one path); the failure is STALE_MCP_LINE,
-// short enough to stay whole in every toast this failure reaches. Both marks are needed: an unrecognized key that is not `background`, or a `background` that
-// is not an unrecognized key, is some other failure.
-const UNRECOGNIZED_KEYS = /unrecognized[_ ]keys?/i
+// What `api()` (register.tsx) puts in a 50arms_api call beyond the method, the path and `background`: the one list of them, so a key added to it is a key the stale-MCP check knows.
+export type ApiExtra = { query?: object; body?: object; board?: number; reply_to_file?: boolean }
+const API_EXTRA_KEYS: Record<keyof ApiExtra, true> = { query: true, body: true, board: true, reply_to_file: true }
+const API_CALL_KEYS: readonly string[] = ['method', 'path', 'background', ...Object.keys(API_EXTRA_KEYS)]
+
+// A 50 Arms MCP from before a release that added a key the hooks send with a 50arms_api call (`background`, `reply_to_file`, ...) refuses that key (a strict schema:
+// MCP error -32602, `unrecognized_keys`, `keys: ["reply_to_file"]`). The call is not retried without the key (one path); the failure is STALE_MCP_LINE,
+// short enough to stay whole in every toast this failure reaches. It is recognised by the keys the refusal names: any key `api()` sends makes it one, never one key by name;
+// a refusal of a key the plugin does not send, or a message that is no unrecognized-keys refusal, is some other failure.
 export const STALE_MCP_LINE = `50 Arms' MCP is older than the plugin: restart this session to update it.`
 
+const KEYS_LIST = /"keys":\s*\[([^\]]*)\]/
+const KEYS_SENTENCE = /Unrecognized keys?(?:\(s\))? in object:\s*((?:'[^']*'(?:,\s*)?)+)/i
+
 export function isStaleMcpRefusal(message: string): boolean {
-  return UNRECOGNIZED_KEYS.test(message) && /\bbackground\b/.test(message)
+  if (!/unrecognized[_ ]keys?/i.test(message)) return false
+  const named = message.match(KEYS_LIST)?.[1] ?? message.match(KEYS_SENTENCE)?.[1] ?? ''
+  return [...named.matchAll(/["']([^"']+)["']/g)].some(m => API_CALL_KEYS.includes(m[1] as string))
 }
 
 // the plugin ships the permission its own hooks need. Auto permission mode puts a hook-initiated `$.mcp.call` to its classifier like any

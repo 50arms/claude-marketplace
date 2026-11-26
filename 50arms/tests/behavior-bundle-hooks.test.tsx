@@ -574,6 +574,32 @@ for (const surface of SURFACES) {
         expect(deliveredReports(d, 'session.after_compaction')).toHaveLength(1)
       })
 
+      test('requested endpoints that keep failing while the bundle is current are held past the loading line, not dropped by each bundle answer: the hold line comes, and the hold is reported once, with its end, when the text is delivered', async ($, on) => {
+        const d = await started($, on)
+        COMPACTED(d)
+        d.world.requestedEndpoints = ENDPOINTS(1_000)
+        d.world.requestedEndpointsOverride = { status: 503, body: { error: 'dashboard_unreachable' } }
+        const first = await firstPrompt($, 'compact')
+        expect(first.context.join('\n')).toMatch(/are loading/)
+        // the plugin keeps asking for the bundle through the window; each unchanged answer must leave the hold in place
+        const reads = d.world.bundleReads.length
+        await d.clock.advance(RETRY_WINDOW_MS + 10_000)
+        expect(d.world.bundleReads.length).toBeGreaterThan(reads)
+        const refused = (await tool($)).deny as string
+        expect(refused).not.toMatch(/are loading/)
+        expect(refused).toContain('requested endpoints could not be fetched')
+        await d.clock.settle()
+        expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
+        d.world.requestedEndpointsOverride = undefined
+        expect(((await $.prompt.submit({ text: 'again' })).context ?? []).join('\n')).toContain('Compacted.')
+        await d.clock.settle()
+        const holdReports = reports(d).filter(r => r.kind === 'hold')
+        expect(holdReports).toHaveLength(1)
+        expect(holdReports[0]).toMatchObject({ reason: 'fetch_failed', event: 'session.after_compaction', agent_id: null })
+        expect(typeof holdReports[0].ended_at).toBe('string')
+        expect((await tool($)).deny).toBeUndefined()
+      })
+
       test('requested endpoints that cannot be fetched hold the compacted context with nothing told or reported, and the next prompt tells the compaction once the fetch works', async ($, on) => {
         const d = await started($, on)
         COMPACTED(d)

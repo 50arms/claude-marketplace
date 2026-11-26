@@ -69,12 +69,13 @@ export function failureOf(f: FetchFailure): Failure {
 
 export const NO_HOLDS: Holds = {}
 
-// A failure for a context: a new hold, or the same hold refreshed with the newest reason (the time it began stays the first failure's).
-export function holdOn(holds: Holds, key: string, failure: Failure, event: string, now: number): Holds {
+// A failure for a context: a new hold, or the same hold refreshed with the newest reason (the time it began stays the first failure's). `undelivered`: the failure is a text that could not be delivered, which a hold keeps once it has it.
+export function holdOn(holds: Holds, key: string, failure: Failure, event: string, now: number, undelivered = false): Holds {
   const held = holds[key]
   const since = held?.since ?? now
   const startedAt = held?.startedAt ?? new Date(now).toISOString()
-  return { ...holds, [key]: { reason: failure.reason, detail: failure.detail, values: failure.values, since, startedAt, event: held?.event ?? event, reported: held?.reported ?? 'none' } }
+  const keep = undelivered || held?.undelivered === true ? ({ undelivered: true } as const) : {}
+  return { ...holds, [key]: { reason: failure.reason, detail: failure.detail, values: failure.values, since, startedAt, event: held?.event ?? event, reported: held?.reported ?? 'none', ...keep } }
 }
 
 export function release(holds: Holds, key: string): { holds: Holds; ended: Hold | null } {

@@ -6,7 +6,8 @@ import { describe, expect } from 'claude-code/testing'
 import { errText } from '../hooks/plan/load'
 import { STALE_MCP_LINE, isStaleMcpRefusal } from '../hooks/relay/refusal'
 import { TOAST_ERROR_MAX } from '../hooks/plan/config'
-import { test, SURFACES, answerReportEvents, activityRows, dashboard, startSession } from './plan-kit'
+import { RETRY_WINDOW_MS } from '../hooks/bundle/hold'
+import { test, SURFACES, answerReportEvents, activityRows, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const START = { agent_id: 'a1b2c3', agent_type: '50arms:worker-sonnet-high' }
 
@@ -34,6 +35,22 @@ for (const surface of SURFACES) {
       expect(d.toasts.filter(t => t.includes(STALE_MCP_LINE))).toHaveLength(1)
     })
 
+    test('an MCP from before reply_to_file refuses the bundle fetch: the session is held, and the loading line and the hold line both say its MCP is older and to restart it, never the raw refusal', async ($, on) => {
+      on('classic.SessionStart', () => ({}) as any)
+      const d = dashboard(on, { mcp: 'beforeReplyToFile' })
+      await startSession($, d, surface)
+      const first = await firstPrompt($, 'startup')
+      expect(first.context.join('\n')).toContain(STALE_MCP_LINE)
+      expect(first.context.join('\n')).not.toMatch(/unrecognized/i)
+      expect(d.replyToFileRefusals).toContain('GET /api/behavior-events/bundle')
+      // no fallback: the bundle is not asked for again without the key, and the session stays held
+      await d.clock.advance(RETRY_WINDOW_MS + 10_000)
+      const held = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)) as any
+      expect(held.deny).toContain(STALE_MCP_LINE)
+      expect(held.deny).not.toMatch(/are loading/)
+      expect(held.deny).not.toMatch(/unrecognized/i)
+    })
+
     test('an MCP that refuses the key from the session start: every toast that says to restart carries the whole sentence, the plan-load toast included', async ($, on) => {
       answerReportEvents(on)
       const d = dashboard(on, { mcp: 'strictKeys' })
@@ -53,6 +70,20 @@ describe('which refusal is an MCP older than the plugin', () => {
 
   test('the strict-schema refusal of the background key is one', () => {
     expect(isStaleMcpRefusal(STRICT)).toBe(true)
+  })
+
+  const refused = (key: string) => `MCP error -32602: Input validation error: Invalid arguments for tool 50arms_api: [ { "code": "unrecognized_keys", "keys": [ "${key}" ], "path": [], "message": "Unrecognized key(s) in object: '${key}'" } ]`
+
+  test('the refusal of any key the plugin sends is one: reply_to_file, and every other key api() can put in a call', () => {
+    for (const key of ['background', 'reply_to_file', 'query', 'body', 'board', 'method', 'path']) expect(isStaleMcpRefusal(refused(key))).toBe(true)
+    expect(isStaleMcpRefusal(`MCP error -32602: Unrecognized key(s) in object: 'reply_to_file'`)).toBe(true)
+    // one of several named keys is enough
+    expect(isStaleMcpRefusal(refused('board_slug').replace('"board_slug"', '"board_slug", "reply_to_file"'))).toBe(true)
+  })
+
+  test('a refusal that names no key the plugin sends is some other failure, though every such message carries a `path` field', () => {
+    expect(isStaleMcpRefusal(refused('board_slug'))).toBe(false)
+    expect(isStaleMcpRefusal('MCP error -32602: invalid_type for reply_to_file')).toBe(false)
   })
 
   test('an unrecognized key that is not background is some other failure', () => {

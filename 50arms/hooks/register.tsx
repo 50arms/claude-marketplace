@@ -4,6 +4,7 @@ import type { Register, SessionRateLimit } from 'claude-code'
 import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, AppVersionState, DiskHome, DiskMeasured, DiskTold } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, isSideSessionNotice, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_SOURCE, sessionEvent } from './context/events'
 import type { RestartAsk, Told } from './context/events'
+import { sha256Hex } from './bundle/sha256'
 import { BUNDLE_PATH, BUNDLE_POLL_MS, BundleShapeError, FLOOR_PATH, REPORTS_PATH, REQUESTED_ENDPOINTS_PATH, bundleFileOf, bundleQuery, changeSignalOf, decide, deliveredText, entriesOf, floorIsStale, isCurrent, mainContext, namedSlots, readBundleBody, readRequestedEndpointsBody, relayStreams, requestedEndpointsQuery, rewindTold, startsNewContext } from './bundle/bundle'
 import type { Bundle, BundleComputed, BundleFile, BundleRead, ChangeSignal, Decision, Delivery, Entry, Told } from './bundle/bundle'
 import { SIGN_IN_INVITATION, floorBody } from './bundle/floor'
@@ -90,7 +91,7 @@ import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
 import { StalePendingError, ackedEventId, clearInFlight, fromPending, isLateTick, isStalled, markInFlight, onlyPlan, pollCursor, putBack, shouldDropResend, toPending } from './relay/outbox'
 import type { Queued } from './relay/outbox'
 import { legacyRuleCheck, legacySettingsPaths } from './relay/legacy-rule'
-import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, isModelLeave, raisedByPlugin, type Refusal } from './relay/refusal'
+import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, isModelLeave, raisedByPlugin, type ApiExtra, type Refusal } from './relay/refusal'
 import { HELD_FOR_INPUT_BAND, HELD_FOR_INPUT_NOTICE, OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, STALE_PENDING_DETAIL, STALE_PENDING_FIX, delayedLine, heldForInput, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { usageBody } from './plan/usage'
 import type { UsageBody } from './plan/usage'
@@ -416,7 +417,7 @@ let dashboardAnswered = false
 // x-danx-session-id header. EVERY call here is the plugin's background work, never the agent's own, so it carries
 // `background: true` (the MCP turns it into a request header): the dashboard keeps the session registered and live for it but does not take it as
 // the agent acting, which would end the agent's pause. The agent's own 50arms_api calls never pass through here. Any rejection (including the engine's "no such server") is an error shown as one.
-async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: number; reply_to_file?: boolean } = {}, server: string = SERVER): Promise<Api> {
+async function api($: any, method: string, path: string, extra: ApiExtra = {}, server: string = SERVER): Promise<Api> {
   let res
   try {
     res = await $.mcp.call(server, '50arms_api', { method, path, ...extra, background: true })
@@ -446,23 +447,13 @@ async function wholeAnswer($: any, outcome: Api, askedForFile: boolean): Promise
     return failed(errMessage(err))
   }
   if (typeof text !== 'string') return failed('no such file')
-  let sha: string
-  try {
-    sha = await sha256Hex(text)
-  } catch (err: any) {
-    return failed(`its sha256 could not be computed: ${errMessage(err)}`)
-  }
+  const sha = sha256Hex(text)
   if (sha !== outcome.replySha256) return failed(`its sha256 ${sha} is not the ${outcome.replySha256} the answer names`)
   try {
     return { ok: outcome.ok, status: outcome.status, body: JSON.parse(text) }
   } catch {
     return failed('not JSON')
   }
-}
-
-async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
-  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 // what a thrown call to the plugin's server means, never in the engine's raw words
@@ -5197,7 +5188,7 @@ async function runFetch($: any): Promise<FetchOutcome> {
     // no key, or the agent gate: the session's own tools tell the model, and nothing here holds it
     if (isSignedOut(r) || agentBlockOf(r) !== null) {
       // a session no key or the agent gate answers for holds nothing: every hold ends, each reported as any answer reports its end (a hold placed while the answer was unknown is dropped as one that was only ever loading)
-      await releaseHolds($, null, await $.clock.now(), version)
+      await releaseHolds($, null, await $.clock.now(), version, cur => cur, true)
       return { kind: 'signed-out' }
     }
     return fetchFailure($, { status: r.status, body: r.body, serverNotConnected: r.unreachable === true, classifierRefused: r.refusal !== undefined, keyRevoked: outcomeRevokedBy(r) !== null })
@@ -5232,13 +5223,15 @@ async function runFetch($: any): Promise<FetchOutcome> {
 //   reported open (`plugin_outdated`, `key_revoked` only) ... its end report, which closes the alert episode 50 Arms opened for it
 //   already ended .............................................. nothing
 // `patch` is applied in the same write (the bundle an answer holds).
-async function releaseHolds($: any, keys: readonly string[] | null, now: number, version: string, patch: (cur: Behavior) => Behavior = cur => cur): Promise<void> {
+// A hold placed for a text that could not be delivered (`undelivered`) is not ended by a bundle answer, which proves nothing about that text: only `withUndelivered` ends it (the owed text was delivered, or the session turned out signed out).
+async function releaseHolds($: any, keys: readonly string[] | null, now: number, version: string, patch: (cur: Behavior) => Behavior = cur => cur, withUndelivered = false): Promise<void> {
   let ended: [string, Hold][] = []
   await update($, behavior, cur => {
     const next = patch(cur)
     let holds = next.holds
     ended = []
     for (const key of keys ?? Object.keys(holds)) {
+      if (!withUndelivered && holds[key]?.undelivered === true) continue
       const r = release(holds, key)
       holds = r.holds
       if (r.ended !== null) ended.push([key, r.ended])
@@ -5398,11 +5391,11 @@ async function ensureBundle($: any, key: string, event: string, waitMs: number, 
 }
 
 // An agent context with no current bundle: held with the failure (a new hold, or the standing one refreshed), kept asking for, and its report opened once the hold line starts.
-async function holdContext($: any, key: string, event: string, failure: Failure): Promise<{ kind: 'held'; hold: Hold }> {
+async function holdContext($: any, key: string, event: string, failure: Failure, undelivered = false): Promise<{ kind: 'held'; hold: Hold }> {
   const at = await $.clock.now()
   let hold!: Hold
   await update($, behavior, cur => {
-    const holds = holdOn(cur.holds, key, failure, event, at)
+    const holds = holdOn(cur.holds, key, failure, event, at, undelivered)
     hold = holds[key] as Hold
     return { ...cur, holds }
   })
@@ -5498,9 +5491,8 @@ async function renderEntries($: any, bundle: Bundle, event: string, deliveries: 
 // The session's requested endpoints, fetched when a compaction is told (`GET /api/behavior-events/requested-endpoints`, built by 50 Arms at that moment, never part of the bundle) and, like the bundle, only as a file. None read: `[]`.
 // A fetch that fails or ends past the hook's deadline is a text that cannot be delivered: it throws, and the caller holds the context.
 async function requestedEndpoints($: any, budget: Budget): Promise<BundleComputed[]> {
-  const version = await pluginVersion($)
   const source = await boundedBy($, budget.deadlineAt, briefingSource<BundleComputed | null>(async () => {
-    const r = await api($, 'GET', REQUESTED_ENDPOINTS_PATH, { query: requestedEndpointsQuery(version), reply_to_file: true })
+    const r = await api($, 'GET', REQUESTED_ENDPOINTS_PATH, { query: requestedEndpointsQuery(await pluginVersion($)), reply_to_file: true })
     if (!r.ok) throw new Error(errText(r))
     return readRequestedEndpointsBody(r.body)
   }))
@@ -5564,13 +5556,16 @@ async function tellEvent($: any, event: string, agentId: unknown, budget: Budget
     if (!(err instanceof BundleShapeError)) throw err
     await rewind()
     // a text that cannot be delivered (a bundle that cannot be evaluated, requested endpoints that could not be fetched, a file that could not be written) is no text: the context is held, as for a fetch that failed, and every start event this call took or told is owed again
-    const held = await holdContext($, key, event, { reason: 'fetch_failed', detail: err.message.slice(0, CALL_ERROR_MAX), values: {} })
+    // the events owed again are recorded before the hold is placed: a hold for an owed event survives bundle answers until that event is delivered (the bundle is current, so nothing else would end it, and a hold every answer dropped would never leave the loading line)
     const owedAgain = moment.owes === true ? [...owed, event] : owed
     await update($, behavior, cur => ({ ...cur, owed: owedAgain.reduce((acc, o) => owe(acc, key, o), cur.owed) }))
+    const held = await holdContext($, key, event, { reason: 'fetch_failed', detail: err.message.slice(0, CALL_ERROR_MAX), values: {} }, owedAgain.length > 0)
     return { kind: 'refused', text: refusalOf(held.hold, await $.clock.now()) }
   }
   // reported only once the entries are delivered: a delivery whose file could not be written was never made
   for (const { d, at } of made) await update($, behavior, cur => ({ ...cur, queue: enqueueDelivery(cur.queue, deliveryItem(bundle.version, d, new Date(at).toISOString()), key, at) }))
+  // the owed event this call took is delivered: a hold kept for it ends, reported as any hold is
+  if ((await read($, behavior)).holds[key]?.undelivered === true && (await read($, behavior)).owed[key] === undefined) await releaseHolds($, [key], await $.clock.now(), await pluginVersion($), cur => cur, true)
   if (rendered.length > 0) detach($, 'Reporting what the plugin delivered', flushReports($))
   return { kind: 'texts', entries: rendered }
 }

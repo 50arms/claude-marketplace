@@ -209,6 +209,8 @@ export type Hold = {
   event: string
   // where the report of this hold stands: not sent, sent still running, or sent with its end
   reported: 'none' | 'open' | 'ended'
+  // set when the hold was placed for a text that could not be delivered while the bundle was current (a failed fetch of the requested endpoints, a file that could not be written, a shape error found while deciding): a bundle answer does not end it, only the delivery of the text it owes does
+  undelivered?: true
 }
 
 export type Holds = Record<string, Hold>
