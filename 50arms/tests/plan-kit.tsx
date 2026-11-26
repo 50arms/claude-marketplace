@@ -1126,13 +1126,13 @@ export function dashboard(
       if (e.args.background !== true) unmarked.push(`${e.args.method} ${e.args.path}`)
       serverPauseRule(e.args)
     }
-    // CP-167: what the spawn guard reads to learn a designer's floor: the card's board, then that board's plan-design review grade
-    if (e.server === SERVER && e.tool === '50arms_api' && e.args.method === 'GET' && (/^\/api\/issues\/[^/]+$/.test(e.args.path) && String(e.args.query?.fields).includes('board_id') || e.args.path === '/api/quality-gates/plan-design/instruction')) {
-      designerGradeReads.push(`${e.args.path} ${JSON.stringify(e.args.query)}`)
+    // CP-167: what the spawn guard reads to learn a designer's floor: the plan-design review grade of the card's board
+    if (e.server === SERVER && e.tool === '50arms_api' && e.args.method === 'GET' && /^\/api\/issues\/[^/]+\/quality-gates\/plan-design\/instruction$/.test(e.args.path)) {
+      designerGradeReads.push(e.args.path)
       if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
       const given = options.designerGrade ?? { model: 'opus', effort: 'high' }
       if ('status' in given) return { value: reply({ error: 'grade boom' }, given.status) }
-      return { value: reply(e.args.path === '/api/quality-gates/plan-design/instruction' ? { gate: 'plan-design', board: Number(e.args.query?.board), review_grade: 'high', ...given } : { id: 'CP-1', board_id: 9 }) }
+      return { value: reply({ gate: 'plan-design', board: 9, review_grade: 'high', ...given }) }
     }
     if (pacingPath(e, '/api/pacing/line')) {
       pacingAttempts.n++

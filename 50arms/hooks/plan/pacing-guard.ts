@@ -2,7 +2,7 @@ import type { AgentSpawnInput, AgentSpawnResult } from 'claude-code'
 
 import type { PacingVerdict } from '../../types'
 import { claimSlot, releaseClaim, reportClaimFailure } from './pacing-line'
-import { PACING_READ_DEADLINE_MS } from './pacing-line'
+import { PACING_READ_DEADLINE_MS, reachDashboard } from './pacing-line'
 import type { PacingEnv } from './pacing-line'
 
 // The usage-pacing guard on sub-agent spawns. The budget is a STRICT cap on SUB-AGENTS: N means exactly N sub-agents at all times; main threads are never paced.
@@ -11,13 +11,14 @@ import type { PacingEnv } from './pacing-line'
 // answer. `pacing-line.ts` makes the claim (one deadline-bound call); this module words a refusal, picks the haiku downgrade for a claimed spawn
 // (`decideSpawn`, pure) and wires the handler (`spawnGuard`); register.tsx only wires the handler in with its dashboard call.
 //
-// A SCREEN DESIGNER is a spawn whose brief names the designer profile (`isDesignerBrief`). Its floor is the board's plan-design review grade (CP-167): the
-// model and effort that `GET /api/quality-gates/plan-design/instruction?board=<the card's board>` answers. A designer is never moved to a smaller model:
-// `decideSpawn` never downgrades it, and a designer whose spawn runs below the grade on model or effort is refused before any claim (`designerRefusal`),
-// with a reason that is not a pacing refusal (it does not start with the prefix below). A grade that cannot be read refuses the start too
-// (`designerGradeFailedReason`): no default floor stands in for it. The model a spawn runs on is read as the engine resolves it (`requestedModelOf`): the
-// call's `model`, else the agent type's own model from its agent file (`agentFileModel`), else the parent's. Its effort is the agent type's own
-// (`agentFileEffort`): a spawn call names no effort.
+// A SCREEN DESIGNER is a spawn whose brief names the designer profile (`isDesignerBrief`). A design is always drawn by Opus or a better model, whatever the
+// board says, so its floor is the higher of Opus and the model of the board's plan-design review grade, at that grade's effort: the model and effort that
+// `GET /api/issues/<card>/quality-gates/plan-design/instruction` answers. A designer is never moved to a smaller model: `decideSpawn` never downgrades it,
+// and a designer whose spawn runs below the floor on model or effort is refused before any claim (`designerRefusal`), with a reason that is not a pacing
+// refusal (it does not start with the prefix below). A grade that cannot be read refuses the start too (`designerGradeFailedReason`): no default floor
+// stands in for it. The model a spawn runs on is read as the engine resolves it (`requestedModelOf`): the call's `model`, else the agent type's own model
+// from its agent file (`agentFileModel`), else the parent's. Its effort is the agent type's own (`agentFileEffort`): the Agent tool's own `effort`
+// argument is not in the spawn hook's input, so a lower one cannot be seen here.
 //
 // BEHAVIOUR GUARD ONLY: it hooks `agent.spawn` and nothing else, never `tool.call`, so an agent can always save its work (commits, pushes, card
 // writes) however tight the budget. It FAILS CLOSED for a signed-in session: a claim that cannot be made (the deadline passed, an error or malformed
@@ -98,13 +99,13 @@ export function decideSpawn(verdict: PacingVerdict | null, requested: string | u
 
 // The designer profile's name: a spawn whose brief's first non-empty line starts with it followed by a space (`gate-designer <card id>`).
 const DESIGNER_PROFILE = 'gate-designer'
+// The brief's first non-empty line, or null for a brief that is not a string or has none.
+function firstLine(prompt: unknown): string | null {
+  if (typeof prompt !== 'string') return null
+  return prompt.split(/\r?\n/).map(line => line.trim()).find(line => line !== '') ?? null
+}
 export function isDesignerBrief(prompt: unknown): boolean {
-  if (typeof prompt !== 'string') return false
-  const first = prompt
-    .split(/\r?\n/)
-    .map(line => line.trimStart())
-    .find(line => line !== '')
-  return first !== undefined && first.startsWith(`${DESIGNER_PROFILE} `)
+  return firstLine(prompt)?.startsWith(`${DESIGNER_PROFILE} `) ?? false
 }
 
 // Effort levels, lowest first.
@@ -112,13 +113,27 @@ const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 type Effort = (typeof EFFORTS)[number]
 const effortOf = (v: unknown): Effort | null => EFFORTS.find(x => x === String(v).toLowerCase()) ?? null
 
-// The designer's floor: the model tier and effort of the board's plan-design review grade.
+// The board's plan-design review grade: a model tier and an effort.
 export type DesignerGrade = { model: Tier; effort: Effort }
 
-// The card a designer brief names: the word after the profile on its first line (`gate-designer CP-167`), or null when there is none.
+// The plugin's own agent types, cheapest first, with what each runs on (a test holds this table equal to the agent files).
+export const OWN_AGENT_TYPES = [
+  { type: '50arms:worker-sonnet-low', model: 'sonnet', effort: 'low' },
+  { type: '50arms:worker-sonnet-medium', model: 'sonnet', effort: 'medium' },
+  { type: '50arms:worker-sonnet-high', model: 'sonnet', effort: 'high' },
+  { type: '50arms:worker-opus-high', model: 'opus', effort: 'high' },
+  { type: '50arms:worker-fable-high', model: 'fable', effort: 'high' },
+] as const
+
+// The designer's floor: the higher of Opus and the grade's model, at the grade's effort.
+export function designerFloor(grade: DesignerGrade): DesignerGrade {
+  return { model: TIERS.indexOf(grade.model) < TIERS.indexOf('opus') ? 'opus' : grade.model, effort: grade.effort }
+}
+
+// The card a designer brief names: the word after the profile on its first line (`gate-designer ABC-12`), or null when there is none.
 export function designerCardOf(prompt: unknown): string | null {
-  if (!isDesignerBrief(prompt)) return null
-  const first = String(prompt).split(/\r?\n/).map(line => line.trim()).find(line => line !== '') as string
+  const first = firstLine(prompt)
+  if (first === null || !first.startsWith(`${DESIGNER_PROFILE} `)) return null
   return first.slice(DESIGNER_PROFILE.length).trim().split(/\s+/)[0] || null
 }
 
@@ -127,44 +142,46 @@ export function designerGradeFailedReason(card: string, failure: string): string
   return `The plan-design review grade of the board of ${card} could not be read (${failure}), so this designer start cannot be judged against it and is refused. Start it again once the dashboard answers.`
 }
 
-// Reads the grade of the board the card lives on: two dashboard calls under the one pacing deadline. Never rejects.
+// Reads the grade of the board the card lives on: one dashboard call under the one pacing deadline, waiting for a server still connecting as the slot
+// claim does. Never rejects.
 async function readDesignerGrade(env: PacingEnv, card: string): Promise<{ grade: DesignerGrade } | { deny: string }> {
   const failed = (why: string) => ({ deny: designerGradeFailedReason(card, why) })
   try {
-    return await env.within(
-      PACING_READ_DEADLINE_MS,
-      (async () => {
-        const issue = await env.call('GET', `/api/issues/${encodeURIComponent(card)}`, undefined, { fields: JSON.stringify({ board_id: true }) })
-        if (!issue.ok || typeof issue.body?.board_id !== 'number') return failed(`the card's board was not answered: status ${issue.status}`)
-        const gate = await env.call('GET', '/api/quality-gates/plan-design/instruction', undefined, { board: String(issue.body.board_id) })
-        if (!gate.ok) return failed(`the gate instruction was not answered: status ${gate.status}`)
-        const model = tierOf(typeof gate.body?.model === 'string' ? gate.body.model : undefined)
-        const effort = effortOf(gate.body?.effort)
-        if (model === null || effort === null) return failed(`the grade names model ${JSON.stringify(gate.body?.model)} and effort ${JSON.stringify(gate.body?.effort)}`)
-        return { grade: { model, effort } }
-      })(),
-      () => failed('no answer within the deadline'),
+    const reached = await reachDashboard(env, await env.now(), `the grade read took longer than its ${PACING_READ_DEADLINE_MS} ms deadline`, () =>
+      env.call('GET', `/api/issues/${encodeURIComponent(card)}/quality-gates/plan-design/instruction`),
     )
+    if (reached.kind === 'failed') return failed(reached.failure)
+    if (reached.kind === 'unloaded') return failed('the plugin was unloaded while waiting')
+    const gate = reached.r
+    if (!gate.ok) return failed(`the gate instruction was not answered: status ${gate.status}`)
+    const model = tierOf(typeof gate.body?.model === 'string' ? gate.body.model : undefined)
+    const effort = effortOf(gate.body?.effort)
+    if (model === null || effort === null) return failed(`the grade names model ${JSON.stringify(gate.body?.model)} and effort ${JSON.stringify(gate.body?.effort)}`)
+    return { grade: { model, effort } }
   } catch (err) {
     return failed(err instanceof Error ? err.message : String(err))
   }
 }
 
-// A designer whose spawn runs below the grade, on model or effort, is refused before any slot is claimed. An unknown model name is not on the tier list, so it
-// is left alone. An effort that is not known (null) is refused: the plugin cannot tell it. The reason names the grade, what the start runs on and what to
-// change; it is not a pacing refusal, so it does not start with REFUSAL_PREFIX.
+// A designer whose spawn runs below the floor (`designerFloor` of the board's grade), on model or effort, is refused before any slot is claimed. An unknown
+// model name is not on the tier list, so it is left alone. An effort that is not known (null) is refused: the plugin cannot tell it. The reason names the
+// grade, what the start runs on and the cheapest of the plugin's own agent types that meets the floor (or that none does); it is not a pacing refusal,
+// so it does not start with REFUSAL_PREFIX.
 export function designerRefusal(grade: DesignerGrade, requestedModel: string | undefined, requestedEffort: string | null, subagentType: string): string | null {
+  const floor = designerFloor(grade)
   const tier = tierOf(requestedModel)
   const effort = effortOf(requestedEffort)
-  const gradeText = `${grade.model} at ${grade.effort} effort`
-  const fix = `Start the designer again on an agent type that runs on ${grade.model} or better at ${grade.effort} effort or higher (50arms:worker-${grade.model}-${grade.effort}), and drop or change any model parameter so it is not below ${grade.model}.`
-  if (effort === null) {
-    return `The board's plan-design review grade is ${gradeText}, and the plugin cannot tell which effort the agent type ${subagentType} runs on. ${fix}`
-  }
-  const modelBelow = tier !== null && TIERS.indexOf(tier) < TIERS.indexOf(grade.model)
-  const effortBelow = EFFORTS.indexOf(effort) < EFFORTS.indexOf(grade.effort)
+  const meets = OWN_AGENT_TYPES.find(t => TIERS.indexOf(t.model) >= TIERS.indexOf(floor.model) && EFFORTS.indexOf(t.effort) >= EFFORTS.indexOf(floor.effort))
+  const floorText = `${floor.model} or better at ${floor.effort} effort or higher`
+  const fix = meets === undefined
+    ? `None of the plugin's agent types runs at that floor, so no designer can start on this board until one does.`
+    : `Start the designer again on ${meets.type} (the cheapest of the plugin's agent types that meets it), and drop or change any model parameter so it is not below ${floor.model}.`
+  const head = `The board's plan-design review grade is ${grade.model} at ${grade.effort} effort, so a screen design runs on ${floorText}`
+  if (effort === null) return `${head}, and the plugin cannot tell which effort the agent type ${subagentType} runs on. ${fix}`
+  const modelBelow = tier !== null && TIERS.indexOf(tier) < TIERS.indexOf(floor.model)
+  const effortBelow = EFFORTS.indexOf(effort) < EFFORTS.indexOf(floor.effort)
   if (!modelBelow && !effortBelow) return null
-  return `The board's plan-design review grade is ${gradeText}, and this designer start runs on ${requestedModel ?? 'an unknown model'} at ${effort} effort. ${fix}`
+  return `${head}, and this designer start runs on ${requestedModel ?? 'an unknown model'} at ${effort} effort. ${fix}`
 }
 
 // The model a spawn runs on if left alone: a fork always inherits the parent's; else the call's `model` (the Agent tool's parameter, which outranks the

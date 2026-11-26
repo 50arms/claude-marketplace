@@ -233,6 +233,32 @@ export function parseClaim(body: any): Claim {
   return { kind: 'failed', failure: 'the claim answer has no valid outcome' }
 }
 
+// One deadline-bound dashboard call that waits for a server still connecting (the claim's and the designer grade read's one rule). `late` is the failure
+// when the deadline passes. `answered` is any answer but the server being unreachable; `unloaded` is the plugin unloading while it waited.
+export type Reached = { kind: 'answered'; r: Api } | { kind: 'failed'; failure: string } | { kind: 'unloaded' }
+export async function reachDashboard(env: PacingEnv, startedAt: number, late: string, call: () => Promise<Api>): Promise<Reached> {
+  for (;;) {
+    const left = PACING_READ_DEADLINE_MS - ((await env.now()) - startedAt)
+    if (left <= 0) return { kind: 'failed', failure: late }
+    const r = await env.within<Api | typeof TIMED_OUT>(left, call(), () => TIMED_OUT)
+    if (r === TIMED_OUT) return { kind: 'failed', failure: late }
+    if (!r.unreachable) return { kind: 'answered', r }
+    // a session KNOWN to be signed in whose server cannot be reached is inside pacing and its spawn is refused (strict cap)
+    if (hasSucceeded || (await env.signedIn())) return { kind: 'failed', failure: 'the dashboard MCP server is not reachable from this session' }
+    // not known to be signed in yet: the server may still be connecting, so it is looked for again until the deadline
+    if (PACING_READ_DEADLINE_MS - ((await env.now()) - startedAt) <= CONNECT_POLL_MS) {
+      // no connection means no claim, and no claim means no spawn, whether or not the
+      // session was ever signed in. A spawn allowed here would be an agent the strict cap never counted.
+      return { kind: 'failed', failure: 'the dashboard MCP server never connected in this session' }
+    }
+    try {
+      await env.sleep(CONNECT_POLL_MS)
+    } catch {
+      return { kind: 'unloaded' } // the plugin was unloaded while waiting: nothing to hold
+    }
+  }
+}
+
 // One deadline-bound claim. Never rejects. A good answer also replaces the cache, so the sub-agent's pacing line is the one the claim saw.
 export async function claimSlot(env: PacingEnv): Promise<Claim> {
   // a claim still in flight across resetPacing (a new session start) must not write the new session's state
@@ -249,27 +275,11 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
       /* a reading that cannot be taken is sent without: the claim is judged on what 50 Arms already holds */
     }
     const late = `the spawn claim took longer than its ${PACING_READ_DEADLINE_MS} ms deadline`
-    for (;;) {
-      const left = PACING_READ_DEADLINE_MS - ((await env.now()) - startedAt)
-      if (left <= 0) return { kind: 'failed', failure: late }
-      const r = await env.within<Api | typeof TIMED_OUT>(left, env.call('POST', CLAIM_PATH, usage === null ? undefined : { usage }), () => TIMED_OUT)
-      if (r === TIMED_OUT) return { kind: 'failed', failure: late }
-      if (r.unreachable) {
-        // a session KNOWN to be signed in whose server cannot be reached is inside pacing and its spawn is refused (strict cap)
-        if (hasSucceeded || (await env.signedIn())) return { kind: 'failed', failure: 'the dashboard MCP server is not reachable from this session' }
-        // not known to be signed in yet: the server may still be connecting, so it is looked for again until the claim's deadline
-        if (PACING_READ_DEADLINE_MS - ((await env.now()) - startedAt) <= CONNECT_POLL_MS) {
-          // no connection means no claim, and no claim means no spawn, whether or not the
-          // session was ever signed in. A spawn allowed here would be an agent the strict cap never counted.
-          return { kind: 'failed', failure: 'the dashboard MCP server never connected in this session' }
-        }
-        try {
-          await env.sleep(CONNECT_POLL_MS)
-        } catch {
-          return { kind: 'unknown' } // the plugin was unloaded while waiting: nothing to hold
-        }
-        continue
-      }
+    {
+      const reached = await reachDashboard(env, startedAt, late, () => env.call('POST', CLAIM_PATH, usage === null ? undefined : { usage }))
+      if (reached.kind === 'failed') return { kind: 'failed', failure: reached.failure }
+      if (reached.kind === 'unloaded') return { kind: 'unknown' }
+      const r = reached.r
       // signed out: outside pacing (50 Arms counts none of this session's agents, so there is no cap to hold its spawns to)
       if (isSignedOut(r)) return { kind: 'unknown' }
       if (!r.ok) return { kind: 'failed', failure: r.status === 0 ? errText(r) : `the spawn claim answered ${r.status}` }
