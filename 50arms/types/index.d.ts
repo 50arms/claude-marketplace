@@ -310,7 +310,7 @@ declare module 'claude-code' {
       // the disk notice last told to each agent (see DiskTold), so a tool call repeats it only on a change or after a few minutes.
       diskTold: DiskTold
       // the last disk measurement (see DiskMeasured), reused by tool calls for a minute.
-      diskMeasured: DiskMeasured
+      diskFacts: DiskMeasured
       // the machine's Windows home, resolved once per session (see DiskHome).
       diskHome: DiskHome
       // the dashboard's app version and the last checkout comparison (see AppVersionState).
