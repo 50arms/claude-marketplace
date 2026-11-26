@@ -52,8 +52,8 @@ export const REFUSAL_PREFIX = 'Usage pacing:'
 // What a paced session does: record its state on its card, pause on `pacing`, and wait; no work of its own. 50 Arms wakes it when pacing frees slots.
 export const PACED_STOP = 'Record any unrecorded state on the card it concerns, pause with PUT /api/plan-sessions/me/pause {waits_on: "pacing"}, do not do the work yourself, and wait until you are told to continue.'
 
-// CP-164: what a refused session does when a LATER pacing message says sub-agents are free. It repeats 50 Arms' own on-pace text (`pacing.conduct.on_pace`, DX-8227: "N of M sub-agents run now, K free:
-// start your waiting sub-agents now, whatever an earlier refusal counted") and agrees with the wake of a session paused on pacing (DX-8138): the refusal's own count is stale once that message arrives.
+// CP-164: what a refused session does when a LATER pacing message says sub-agents are free. It repeats 50 Arms' own on-pace text (`pacing.conduct.on_pace`: "N of M sub-agents run now, K free:
+// start your waiting sub-agents now, whatever an earlier refusal counted") and agrees with the wake of a session paused on pacing: the refusal's own count is stale once that message arrives.
 export const FREED_SLOTS = 'A later pacing message that says sub-agents are free ("N of M sub-agents run now, K free") is the change: then start the waiting work at once, whatever count this refusal named (50 Arms refuses the start itself if the slots are gone again).'
 
 // the refusal the model reads, worded from the cause 50 Arms' own claim answer names (`refusal`, from its `refusalOf`), never re-derived here.
