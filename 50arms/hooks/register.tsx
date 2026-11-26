@@ -97,6 +97,7 @@ import { HELD_FOR_INPUT_BAND, HELD_FOR_INPUT_NOTICE, OLD_SERVER_DETAIL, OLD_SERV
 import { usageBody } from './plan/usage'
 import type { UsageBody } from './plan/usage'
 import { agentFileEffort, agentFileModel, ownAgentFile, spawnGuard } from './plan/pacing-guard'
+import { bugEvidenceGuard } from './plan/bug-evidence-guard'
 import { pacingLevel, pacingLine, refreshPacing, resetPacing, slotWaiting, withLine } from './plan/pacing-line'
 import { TURN_ACTIVITY_PATH, afterCompaction, nextSince, turnActivityBody } from './reports/turn-activity'
 import type { TurnActivity } from './reports/turn-activity'
@@ -5906,7 +5907,8 @@ export const register: Register = (on, options) => {
   on('session.measure', onMeasure)
   // usage pacing denies or downgrades a sub-agent spawn (never a tool call: saving work stays possible)
   on('agent.spawn', async ($, e, next) => {
-    const started = await spawnGuard(pacingEnv($))(e, next)
+    const env = pacingEnv($)
+    const started = await spawnGuard(env)(e, ne => bugEvidenceGuard(env)(ne, next))
     if (started.deny === undefined) {
       const now = await $.clock.now()
       await update($, agentBriefs, cur => briefSpawned(cur, e.prompt, now))

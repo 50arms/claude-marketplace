@@ -1174,6 +1174,8 @@ export function dashboard(
       if (world.agentGate === 'agent_not_held') return { value: replied(e.args, reply({ error: 'agent_not_held', state: 'agent_not_held', instruction: 'You hold no team agent: call session_connect to claim one.' }, 403)) }
       return { value: { content: [{ type: 'text', text: JSON.stringify(AGENT_GATE_HALT(world.agentGate)) }], isError: true } }
     }
+    // CP-161: the Bug-evidence spawn check (POST /api/issues/spawn-check) allows every brief: the suites that cover it call the guard directly
+    if (e.server === 'plugin:50arms:platform' && e.tool === '50arms_api' && e.args.path === '/api/issues/spawn-check') return { value: reply({ allowed: true, refusals: [] }) }
     // DX-5593: the spawn claim, decided like 50 Arms does under its lock: refuse when the level is not on pace or the live count (the line's
     // `sub_agents` plus the claims held) has reached the budget; unknown (a `reason`, no level) claims nothing. The answer is the line plus {claimed, claim_id}.
     if (e.server === 'plugin:50arms:platform' && e.tool === '50arms_api' && typeof e.args.path === 'string' && e.args.path.startsWith('/api/pacing/agents/claim')) {
