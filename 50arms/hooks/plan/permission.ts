@@ -4,7 +4,7 @@ import type { ApprovalRequest } from './approval'
 import { PROBLEM_GLYPH } from './config'
 import { isSignedOut, outcomeRevokedBy } from './mcp'
 import type { ToolOutcome } from './mcp'
-import { permissionDeniedNote, permissionExpiredNote, permissionGrantedNote } from './notes'
+import { permissionExpiredNote } from './notes'
 
 // a `request_permission` call of the dashboard MCP. It answers at once, never waiting
 // for the person:
@@ -56,19 +56,31 @@ export function claimStatus(body: any): ClaimDecision {
 // would contradict that. A lapsed key, or a request the dashboard no longer knows (404: gone, or this session holds another key
 // now), is the session having ended: told as expired. Any other failure keeps the request.
 // `granted`: what a person granted, on the answer that granted anything or nothing; absent on any other drop.
-export type Settled = { kind: 'keep' } | { kind: 'drop'; note: string | null; granted?: string[] }
+export type Telling = { kind: 'note'; text: string } | { kind: 'event'; event: string; extra: Record<string, string> }
+export type Settled = { kind: 'keep' } | { kind: 'drop'; telling: Telling | null; granted?: string[] }
+
+// The bundle event a decision is told as: one per outcome whose wording differs, its slots the request's code and the lists as the person's decision made them.
+export function decisionTelling(r: Pick<PermissionRequest, 'code' | 'permissions'>, granted: readonly string[] | null): Telling {
+  const asked = r.permissions.join(', ')
+  if (granted === null) return { kind: 'event', event: 'permission.denied', extra: { permission_code: r.code, permissions_asked: asked } }
+  const notGranted = r.permissions.filter(p => !granted.includes(p))
+  if (granted.length === 0) return { kind: 'event', event: 'permission.granted_none', extra: { permission_code: r.code, permissions_asked: asked } }
+  const extra = { permission_code: r.code, permissions_asked: asked, permissions_granted: granted.join(', ') }
+  return notGranted.length > 0 ? { kind: 'event', event: 'permission.granted_part', extra: { ...extra, permissions_not_granted: notGranted.join(', ') } } : { kind: 'event', event: 'permission.granted_all', extra }
+}
 
 const KEEP: Settled = { kind: 'keep' }
-const drop = (note: string | null): Settled => ({ kind: 'drop', note })
+const drop = (telling: Telling | null): Settled => ({ kind: 'drop', telling })
+const expired = (r: PermissionRequest): Settled => drop({ kind: 'note', text: permissionExpiredNote(r) })
 
 export function settle(r: PermissionRequest, out: ToolOutcome): Settled {
   if (outcomeRevokedBy(out) !== null) return drop(null)
-  if (out.status === 404 || isSignedOut(out)) return drop(permissionExpiredNote(r))
+  if (out.status === 404 || isSignedOut(out)) return expired(r)
   if (!out.ok) return KEEP
   const decision = claimStatus(out.body)
-  if (decision.kind === 'granted') return { kind: 'drop', note: permissionGrantedNote(r, decision.granted), granted: decision.granted }
-  if (decision.kind === 'denied') return drop(permissionDeniedNote(r))
-  if (decision.kind === 'expired') return drop(permissionExpiredNote(r))
+  if (decision.kind === 'granted') return { kind: 'drop', telling: decisionTelling(r, decision.granted), granted: decision.granted }
+  if (decision.kind === 'denied') return drop(decisionTelling(r, null))
+  if (decision.kind === 'expired') return expired(r)
   return KEEP
 }
 

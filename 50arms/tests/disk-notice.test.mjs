@@ -12,6 +12,7 @@ import {
   DISK_TOLD_KEEP,
   applyOverrides,
   diskDecision,
+  diskKey,
   diskNotice,
   freeSpaceArgv,
   hostKindOf,
@@ -70,32 +71,33 @@ test('parseWindowsProfile and joinPath', () => {
   assert.equal(joinPath('windows', 'C:\\Users\\dev', '.danxbot'), 'C:\\Users\\dev\\.danxbot')
 })
 
-test('enough free space and no window: silent', () => {
-  assert.equal(diskNotice(facts({ freeBytes: 40 * GIB })), '')
+const NONE = { floor: [], window: null, low: null }
+
+test('enough free space and no window: no facts, and no key to remember', () => {
+  assert.deepEqual(diskNotice(facts({ freeBytes: 40 * GIB })), NONE)
+  assert.equal(diskKey(NONE), '')
 })
 
-test('under the floor: a LOW DISK notice naming the free space and the floor, saying the make targets run from the dashboard repo checkout', () => {
-  const notice = diskNotice(facts({ freeBytes: 25 * GIB }))
-  assert.match(notice, /^LOW DISK: C: has 25\.0 GB free, under the 40\.0 GB floor\./)
-  assert.doesNotMatch(notice, /hard minimum/)
-  assert.match(notice, /From the dashboard repo checkout, `make machine-report`/)
+test('under the floor: the facts carry the free space and the floor as the notice shows them, and no hard minimum', () => {
+  assert.deepEqual(diskNotice(facts({ freeBytes: 25 * GIB })), { floor: [], window: null, low: { free: '25.0 GB', floor: '40.0 GB', hardMinimum: null } })
 })
 
-test('under the hard minimum the notice also says host test runs refuse', () => {
-  assert.match(diskNotice(facts({ freeBytes: 11 * GIB })), /Under the 15\.0 GB hard minimum: host test runs refuse/)
+test('under the hard minimum the facts also carry it', () => {
+  assert.equal(diskNotice(facts({ freeBytes: 11 * GIB })).low.hardMinimum, '15.0 GB')
 })
 
 test('the limits have one source: a missing file is DISK FLOORS UNAVAILABLE, never a built-in default', () => {
-  const notice = diskNotice(facts({ floorsText: null, freeBytes: 1 * GIB }))
-  assert.match(notice, /^DISK FLOORS UNAVAILABLE: .*machine-disk-floors is missing/)
-  assert.match(notice, /from the dashboard repo checkout/)
-  assert.doesNotMatch(notice, /LOW DISK/)
+  const found = diskNotice(facts({ floorsText: null, freeBytes: 1 * GIB }))
+  assert.equal(found.floor.length, 1)
+  assert.match(found.floor[0], /^DISK FLOORS UNAVAILABLE: .*machine-disk-floors is missing/)
+  assert.match(found.floor[0], /from the dashboard repo checkout/)
+  assert.equal(found.low, null)
 })
 
 test('a malformed limits file or window marker is one DISK CHECK FAILED line, never silence', () => {
-  assert.match(diskNotice(facts({ floorsText: 'floor_gib=abc\nhard_minimum_gib=15\n' })), /^DISK CHECK FAILED: floor_gib must be a positive number/)
-  assert.match(diskNotice(facts({ floorsText: 'floor_gib=40\n' })), /^DISK CHECK FAILED: hard_minimum_gib/)
-  assert.match(diskNotice(facts({ windowText: 'soon\n' })), /^DISK CHECK FAILED: the compaction window marker/)
+  assert.match(diskNotice(facts({ floorsText: 'floor_gib=abc\nhard_minimum_gib=15\n' })).floor[0], /^DISK CHECK FAILED: floor_gib must be a positive number/)
+  assert.match(diskNotice(facts({ floorsText: 'floor_gib=40\n' })).floor[0], /^DISK CHECK FAILED: hard_minimum_gib/)
+  assert.match(diskNotice(facts({ windowText: 'soon\n' })).floor[0], /^DISK CHECK FAILED: the compaction window marker/)
 })
 
 test('both of 50 Arms overrides apply, and the two limits are checked against each other AFTER the overrides', () => {
@@ -107,23 +109,21 @@ test('both of 50 Arms overrides apply, and the two limits are checked against ea
   assert.deepEqual(applyOverrides({ floorBytes: 10 * GIB, hardMinimumBytes: 15 * GIB }, { DANXBOT_DISK_FLOOR_GIB: '20' }), { floorBytes: 20 * GIB, hardMinimumBytes: 15 * GIB })
   assert.throws(() => applyOverrides(floors, { DANXBOT_DISK_FLOOR_GIB: '10' }), /the hard minimum .* must not exceed the floor/)
   assert.throws(() => applyOverrides(floors, { DANXBOT_DISK_FLOOR_GIB: 'lots' }), /DANXBOT_DISK_FLOOR_GIB must be a positive number/)
-  assert.match(diskNotice(facts({ env: { DANXBOT_DISK_FLOOR_GIB: '500' } })), /LOW DISK: C: has 100\.0 GB free, under the 500\.0 GB floor/)
+  assert.deepEqual(diskNotice(facts({ env: { DANXBOT_DISK_FLOOR_GIB: '500' } })).low, { free: '100.0 GB', floor: '500.0 GB', hardMinimum: null })
 })
 
-test('an open compaction window tells the session to pause, before the disk line', () => {
-  const notice = diskNotice(facts({ freeBytes: 25 * GIB, windowText: '1792728384\ncompacting docker\n' }))
-  const lines = notice.split('\n')
+test('an open compaction window is a fact with its opening time and reason, beside the disk facts', () => {
+  const found = diskNotice(facts({ freeBytes: 25 * GIB, windowText: '1792728384\ncompacting docker\n' }))
   // the marker's opening time is fixed (epoch second 1792728384), so no clock is involved
-  assert.equal(lines[0], 'MAINTENANCE WINDOW OPEN since 2026-10-23T04:06:24.000Z: compacting docker')
-  assert.match(lines[1], /start no test run, build, deploy or dispatch/)
-  assert.match(lines[1], /run from the dashboard repo checkout/)
-  assert.ok(notice.indexOf('MAINTENANCE WINDOW') < notice.indexOf('LOW DISK'))
+  assert.deepEqual(found.window, { openedAt: '2026-10-23T04:06:24.000Z', reason: 'compacting docker' })
+  assert.notEqual(found.low, null)
 })
 
-test('the window alone (plenty of space) is still told', () => {
-  const notice = diskNotice(facts({ windowText: '1792728384\nwhy\n' }))
-  assert.match(notice, /^MAINTENANCE WINDOW OPEN/)
-  assert.doesNotMatch(notice, /LOW DISK/)
+test('the window alone (plenty of space) is still a fact', () => {
+  const found = diskNotice(facts({ windowText: '1792728384\nwhy\n' }))
+  assert.notEqual(found.window, null)
+  assert.equal(found.low, null)
+  assert.notEqual(diskKey(found), '')
 })
 
 test('parsers: limits file and window marker', () => {

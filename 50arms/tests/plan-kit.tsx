@@ -175,6 +175,29 @@ export function sha256Hex(textValue: string): string {
   return h.map(v => (v >>> 0).toString(16).padStart(8, '0')).join('')
 }
 
+/**
+ * The stand-in bundle's texts for the events the plugin fires at moments it measures or a person causes: it fills the slots, the words are these. A suite that wants other words sets
+ * `world.bundle.events[<key>]`, which wins.
+ */
+const slotted = (event: string, id: number, text: string, slots: string[], mechanism = 'plugin.context') => bundleEvent(event, [text], { id, slots, hookSlots: slots, mechanism })
+const PERMISSION_SLOTS = ['permission_code', 'permissions_asked']
+export const MOMENT_EVENTS = [
+  slotted('disk.maintenance_window', 2000, 'MAINTENANCE WINDOW OPEN since {{slot:window_opened_at}}: {{slot:window_reason}}', ['window_opened_at', 'window_reason']),
+  slotted('disk.low', 2010, 'LOW DISK: C: has {{slot:disk_free_amount}} free, under the {{slot:disk_floor_amount}} floor.', ['disk_free_amount', 'disk_floor_amount']),
+  slotted('disk.below_hard_minimum', 2020, 'Under the {{slot:disk_hard_minimum_amount}} hard minimum: host test runs refuse.', ['disk_hard_minimum_amount']),
+  slotted('checkout.behind', 2030, 'The app is at {{slot:dashboard_version}} and this checkout is at {{slot:checkout_version}}: rebase onto origin/main now.', ['dashboard_version', 'checkout_version']),
+  slotted('band.disconnect', 2040, 'The operator disconnected this session from {{slot:left_ref}} "{{slot:left_name}}" with the band. It is still signed in. Do not call session_connect to join a plan or card, and do not write to /api/plans/mine routes, until the operator asks.', ['left_ref', 'left_name']),
+  slotted('permission.granted_all', 2050, 'Permission request {{slot:permission_code}} (asked: {{slot:permissions_asked}}) was approved: granted {{slot:permissions_granted}}. Retry the call that was refused.', [...PERMISSION_SLOTS, 'permissions_granted'], 'plugin.prompt'),
+  slotted('permission.granted_part', 2060, 'Permission request {{slot:permission_code}} (asked: {{slot:permissions_asked}}) was approved in part: granted {{slot:permissions_granted}}. Not granted: {{slot:permissions_not_granted}}. Retry the call that was refused.', [...PERMISSION_SLOTS, 'permissions_granted', 'permissions_not_granted'], 'plugin.prompt'),
+  slotted('permission.granted_none', 2070, 'Permission request {{slot:permission_code}} (asked: {{slot:permissions_asked}}) was approved but granted none of it: do not retry the refused call.', PERMISSION_SLOTS, 'plugin.prompt'),
+  slotted('permission.denied', 2080, 'Permission request {{slot:permission_code}} (asked: {{slot:permissions_asked}}) was denied: do not retry the refused call.', PERMISSION_SLOTS, 'plugin.prompt'),
+  slotted('session.agent_changed', 2090, 'Your team agent lapsed and this session signed in again as {{slot:agent_name}}. Sign as {{slot:agent_name}} from now on.', ['agent_name'], 'plugin.prompt'),
+  slotted('subagent.finished', 2100, 'Finished: {{slot:sub_agent_labels}}.', ['sub_agent_labels']),
+]
+/** What the stand-in says of an agent change. */
+export const agentChangedText = (name: string) => `Your team agent lapsed and this session signed in again as ${name}. Sign as ${name} from now on.`
+/** What a finish is told as: the `subagent.finished` text, then the `subagent.stop` text. */
+export const finishedAgentsText = (labels: readonly string[], stopText: string) => `Finished: ${labels.join('; ')}.\n\n${stopText}`
 /** The bundle event a test sets (`world.bundle.events['session.after_clear']`) so a clear is followed by the cleared briefing: a plain /clear tells nothing in the kit's default bundle. */
 export const clearedEvent = () => bundleEvent('session.after_clear', [EVENT_TEXT('after_clear'), CLEARED_TEMPLATE], { id: 1200, slots: BRIEFING_SLOTS })
 /** What the plugin reported delivering for one catalog event (`GET`-free: from the recorded `POST behavior-events` bodies); `await d.clock.settle()` first, the reports go out in the background. */
@@ -1012,7 +1035,7 @@ export function dashboard(
     if (world.planId !== null) named.push(bundleEvent('subagent.compacted', [SUB_BRIEFING_TEMPLATE], { id: 1100, slots: ['sub_agent_id', 'sub_agent_name'] }))
     // the time stamp is the `clock_time` slot of a prompt's text (CP-146): the stand-in's `prompt.submit` text is the slot alone, as the plugin used to hand it
     const prompt = bundleEvent('prompt.submit', ['{{slot:clock_time}}'], { id: 900, slots: ['clock_time'], hookSlots: ['clock_time'] })
-    const events = [...[...named, prompt].filter(e => !(e.event in world.bundle.events)), ...Object.values(world.bundle.events)]
+    const events = [...[...named, prompt, ...MOMENT_EVENTS].filter(e => !(e.event in world.bundle.events)), ...Object.values(world.bundle.events)]
     return reply({ version: world.bundle.version, min_plugin_version: world.bundle.minPlugin, floor_lines_plugin_version: world.bundle.floorVersion, ...assembleBundle(events) })
   }
   const isRoleRead = (a: any) => a.method === 'GET' && a.path === '/api/plan-sessions/me/role'

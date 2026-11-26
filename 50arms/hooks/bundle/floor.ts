@@ -1,5 +1,5 @@
 import { foregroundLockNotice } from '../context/foreground'
-import { diskFault, noticeText } from '../context/disk'
+import { diskFaultLine, floorsUnavailableLine } from '../context/disk'
 import { delayedLine, refusedLine, stalledLine, stoppedLine } from '../relay/text'
 import { permissionExpiredNote, revokeNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from '../plan/notes'
 import { failureLine } from './reports'
@@ -80,8 +80,8 @@ const NOTICES: { reason: NoticeReason; event: string; text: string }[] = [
   { reason: 'permission_expired', event: 'key.revoked', text: permissionExpiredNote({ code: slot('code'), permissions: [slot('permissions')] }) },
   { reason: 'report_failed', event: 'dashboard.unreachable', text: failureLine(slot('reason')) },
   { reason: 'foreground_lock', event: 'session.start', text: foregroundLockNotice(slot('reason')) },
-  { reason: 'disk_check_failed', event: 'session.start', text: diskFault(new Error(slot('detail'))) },
-  { reason: 'disk_floors_unavailable', event: 'session.start', text: noticeText({ freeBytes: 0, floors: null, floorsPath: slot('floors_path'), window: null }) },
+  { reason: 'disk_check_failed', event: 'session.start', text: diskFaultLine(new Error(slot('detail'))) },
+  { reason: 'disk_floors_unavailable', event: 'session.start', text: floorsUnavailableLine(slot('floors_path')) },
 ]
 
 export type FloorLine = { reason: FloorReason | NoticeReason; event: string; text: string }

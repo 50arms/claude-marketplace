@@ -165,13 +165,11 @@ for (const surface of SURFACES) {
       expect(toolNoticeOf(await tool($))).toBe('')
     })
 
-    test('an open compaction window tells the session to pause', async ($, on) => {
+    test('an open compaction window is told with its opening time and reason', async ($, on) => {
       await started($, on, WSL, m => wslMachine(m, { freeGiB: 100, window: '1792728384\ncompacting docker\n' }))
       const notice = noticeOf((await $.prompt.submit({ text: 'hello' })).context)
       // the marker's opening time is fixed (epoch second 1792728384), so no clock is involved
-      expect(notice.split('\n')[0]).toBe('MAINTENANCE WINDOW OPEN since 2026-10-23T04:06:24.000Z: compacting docker')
-      expect(notice).toMatch(/start no test run, build, deploy or dispatch/)
-      expect(notice).toMatch(/run from the dashboard repo checkout/)
+      expect(notice).toBe('MAINTENANCE WINDOW OPEN since 2026-10-23T04:06:24.000Z: compacting docker')
     })
 
     test('both overrides apply, then the limits are checked against each other', async ($, on) => {

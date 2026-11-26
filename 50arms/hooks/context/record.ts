@@ -77,11 +77,6 @@ export function finishedAgentLabel(id: string, agent: SpawnedAgent, cards: reado
   return cards.length === 0 ? label : `${label} (its brief named ${cards.join(', ')})`
 }
 
-/** What the main session is told for the agents that finished since its last action: who they are, then the registry's `sub_agent_stop` text, once. */
-export function finishedAgentsText(labels: readonly string[], registryText: string): string {
-  return `Finished: ${labels.join('; ')}. ${registryText}`
-}
-
 /** A call that writes a plan or a card (the session's own, through 50arms_api): the call after which the band and the title's Needs You mark re-read the plan at once. */
 export function isRecordWrite(method: unknown, path: unknown): boolean {
   return typeof method === 'string' && method.toUpperCase() !== 'GET' && typeof path === 'string' && /^\/api\/(issues|plans)(\/|$)/.test(path)

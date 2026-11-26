@@ -53,7 +53,6 @@ export const READY_RELAY_OLDER =
   "Ready list: this session's 50 Arms MCP server is older than the plugin, so 50 Arms cannot ask it to clear after a job, and it stays on a finished job instead of rejoining the list. Reconnect the 50 Arms MCP server (/mcp) or start a new session to fix it."
 // a restarted process that cannot read the dashboard's ready loop cannot tell whether it was in one, so it takes none up and says why
 export const readyLoopUnread = (why: string) => `Ready list: this session's ready loop could not be read (${why}), so a loop it was in is not taken back up. Run /${READY_TYPED} to rejoin.`
-export const readyAgentChanged = (name: string) => `Your team agent lapsed and this session signed in again as ${name}. Sign as ${name} from now on, and carry on with your work.`
 export const readyAdopted = (repo: string) => `This session is still in the ready loop for ${repo}, and rejoins the list after each job. /${READY_TYPED} off leaves it.`
 export const readyRevoked = (by: string) => `This session left the ready list: ${by} revoked its access.`
 export const readyJoined = (repo: string) => `Waiting on the ready list for ${repo}.`

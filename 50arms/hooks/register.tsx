@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionRateLimit } from 'claude-code'
 
-import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, AppVersionState, DiskHome, DiskMeasured, DiskTold } from '../types'
+import type { DiskFacts, AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, AppVersionState, DiskHome, DiskMeasured, DiskTold } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, isSideSessionNotice, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_SOURCE, sessionEvent } from './context/events'
 import type { RestartAsk, Told } from './context/events'
 import { sha256Hex } from './bundle/sha256'
@@ -15,14 +15,14 @@ import type { Loud } from './bundle/reports'
 import { NO_BEHAVIOR, owe, settleOwed } from './bundle/state'
 import type { Behavior, OwedTaking } from './bundle/state'
 import { stamp as nextStamp } from './context/stamp'
-import { announcedBy, endedWithParent, finishedAgentLabel, finishedAgentsText, isRecordWrite, spawnedAfter } from './context/record'
+import { announcedBy, endedWithParent, finishedAgentLabel, isRecordWrite, spawnedAfter } from './context/record'
 import type { FinishedAgent, SpawnedAgents } from './context/record'
 import { FOREGROUND_LOCK_TIMEOUT_MS, foregroundLockArgv, foregroundLockNotice, parseForegroundLockAnswer } from './context/foreground'
 import { heldReason, nextWakeMs, receive, releasedText, splitDue, taskNoticeOf } from './context/interim-notice'
 import type { HeldNotice, TaskNotice } from './context/interim-notice'
-import { DISK_MEASURE_MS, MAIN_AGENT, diskDecision, diskFault, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
+import { DISK_MEASURE_MS, MAIN_AGENT, NO_DISK_FACTS, diskDecision, diskFault, diskKey, diskNotice, freeSpaceArgv, hostKindOf, joinPath, parseFreeBytes, parseWindowsProfile } from './context/disk'
 import type { DiskEnv, HostKind } from './context/disk'
-import { APP_VERSION_FILE, appVersionLine, versionFaultLine } from './context/app-version'
+import { APP_VERSION_FILE, checkoutBehind, versionFaultLine } from './context/app-version'
 import { COMPACTING_NOTE_TTL_MS, agentListSlot, cardListSlot, gitStatusSlot, owedListSlot, parseGitStatus, planIdSlot, planNameSlot } from './compaction/briefing'
 import type { BriefingAgent, BriefingCard, GitState, OwedComment, Source } from './compaction/briefing'
 import { AGENT_FAULT_KEY_MAX, AGENT_FAULT_TOLD_KEEP, AGENT_SIZES_KEEP, CLEAR_MARK_TTL_MS, ENGINE_VERSION_NOTICE, clearMarkOf, compactionClearMarkKey, HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_PREFIX, agentVerdict, armedPercentOf, parseControlFile, readyRelease, runsSessionCompact, sizeOfUsage, spentReleaseId, staleReleaseKeys, staleSessionKeys, underHandshake, usedReleaseKey, verdict } from './compaction/control'
@@ -31,10 +31,11 @@ import { machineRegisteredNote, registrationFailedToast, registrationOf, registr
 import { approvalRequestOf, permissionShownNote, signInShownNote } from './plan/approval'
 import type { ApprovalRequest } from './plan/approval'
 import { renderBand } from './plan/band'
-import { CLEAR_SPENT_PREFIX, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_JUDGED_PREFIX, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PATH, READY_PERMISSION_ENDED, READY_REPOS_PAGE, READY_REVOKED, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_SKILL, READY_STOPPED, READY_TICK_MS, READY_USAGE, READY_RELAY_OLDER, REPOS_PERMISSION, REPOS_PERMISSION_REASON, clearSpentKey, holdsWork, joiningLoop, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyAgentRefusalNote, readyFailed, readyJoined, readyJudgedKey, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyNoAgentYet, readyPermissionRefused, readyRejoined, readyRevoked, readyWorkTaken, remoteIs, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from './ready/loop'
+import { CLEAR_SPENT_PREFIX, READY_DISCONNECTED, READY_JOINING, READY_JUDGE_PROMPT, READY_JUDGED_PREFIX, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PATH, READY_PERMISSION_ENDED, READY_REPOS_PAGE, READY_REVOKED, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_SKILL, READY_STOPPED, READY_TICK_MS, READY_USAGE, READY_RELAY_OLDER, REPOS_PERMISSION, REPOS_PERMISSION_REASON, clearSpentKey, holdsWork, joiningLoop, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentRefusalNote, readyFailed, readyJoined, readyJudgedKey, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyNoAgentYet, readyPermissionRefused, readyRejoined, readyRevoked, readyWorkTaken, remoteIs, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from './ready/loop'
 import type { GithubOrigin, MarkAnswer, ServerLoop } from './ready/loop'
 import { sessionFilePath } from './relay/session-file'
 import { asApproval, claimPath, permissionRequestOf, publicIdOf, settle } from './plan/permission'
+import type { Telling } from './plan/permission'
 import { linkRefs } from './plan/card-links'
 import { settleDetached } from './plan/detached'
 import { renderFooter } from './plan/footer'
@@ -78,7 +79,7 @@ import { connectTargetOf, planTarget } from './plan/target'
 import { holdKey } from './plan/hold'
 import type { BandHold } from './plan/hold'
 import type { ToolOutcome } from './plan/mcp'
-import { disconnectNote, revokeNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
+import { revokeNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, signInNote } from './plan/notes'
 import { NO_AGENT, signInStep } from './plan/sign-in'
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
@@ -172,7 +173,7 @@ const heldNotices = atom({ plugin: '50arms', key: 'heldNotices' } as const, [] a
 // The machine's free-space notice (hooks/context/disk.ts). Told per agent (the main thread and each sub-agent), so a tool call repeats an unchanged
 // notice to the same agent only after DISK_REPEAT_MS; measured at most once per DISK_MEASURE_MS; the Windows home found once per session.
 const diskTold = atom({ plugin: '50arms', key: 'diskTold' } as const, {} as DiskTold)
-const diskMeasured = atom({ plugin: '50arms', key: 'diskMeasured' } as const, null as DiskMeasured)
+const diskMeasured = atom({ plugin: '50arms', key: 'diskFacts' } as const, null as DiskMeasured)
 const diskHome = atom({ plugin: '50arms', key: 'diskHome' } as const, null as DiskHome)
 // the dashboard's app version (from its answers' `app_version`) and the version/folder pair whose checkout was last compared with it (hooks/context/app-version.ts). Carried across a /clear or a /resume like every atom; the start that opens the next conversation resets the comparison, so that conversation is told afresh.
 const appVersion = atom({ plugin: '50arms', key: 'appVersion' } as const, { dashboard: null, checked: null } as AppVersionState)
@@ -732,19 +733,19 @@ async function refresh($: any, force = false): Promise<void> {
 // expired, unknown to the dashboard, or the session lost its key. A claim that fails for any other reason keeps it for the next
 // poll: a request has no expiry clock of its own. The model is told each decision once, waking it when it is idle (tellModelAwake).
 async function settlePermissionRequests($: any): Promise<void> {
-  const notes = new Map<string, string | null>()
+  const tellings = new Map<string, Telling | null>()
   const granted = new Map<string, string[]>()
   for (const r of await read($, permissionRequests)) {
     const settled = settle(r, await api($, 'POST', claimPath(r)))
-    if (settled.kind === 'drop') notes.set(r.publicId, settled.note)
+    if (settled.kind === 'drop') tellings.set(r.publicId, settled.telling)
     if (settled.kind === 'drop' && settled.granted !== undefined) granted.set(r.publicId, settled.granted)
   }
   // only what this run takes out of the list is told by it: a settle running beside it (the fast poll and a refresh) takes
   // none of the same requests
   let taken: PermissionRequest[] = []
   await update($, permissionRequests, cur => {
-    taken = cur.filter(r => notes.has(r.publicId))
-    return cur.filter(r => !notes.has(r.publicId))
+    taken = cur.filter(r => tellings.has(r.publicId))
+    return cur.filter(r => !tellings.has(r.publicId))
   })
   const readyPermission = (await read($, readyLoop))?.permissionId
   for (const r of taken) {
@@ -754,8 +755,10 @@ async function settlePermissionRequests($: any): Promise<void> {
       else await leaveReady($, READY_PERMISSION_ENDED)
       continue
     }
-    const note = notes.get(r.publicId)
-    if (typeof note === 'string' && (await markToldOnce($, r.publicId))) await tellModelAwake($, note)
+    const telling = tellings.get(r.publicId)
+    if (telling === null || telling === undefined || !(await markToldOnce($, r.publicId))) continue
+    if (telling.kind === 'note') await tellModelAwake($, telling.text)
+    else await tellEventToModel($, telling.event, telling.extra, 'plugin.prompt')
   }
   await syncPermissionPoll($)
 }
@@ -816,6 +819,22 @@ async function tellModel($: any, text: string): Promise<void> {
 async function tellModelAwake($: any, text: string): Promise<void> {
   const failure = await deliverEvent($, text, false)
   if (failure !== null) notToldToast($, failure, text)
+}
+
+// What a moment the model did not cause (a person's button, a decided request, a changed agent) tells it: the bundle's texts for the event, each told the way the event's mechanism
+// carries it. A `plugin.prompt` text wakes an idle session; a `plugin.context` one is a row the model reads on its next turn. A hold line, or a session no bundle can be read for, is a toast
+// that carries what the model was not told, never silence.
+async function tellEventToModel($: any, event: string, extra: Record<string, string>, mechanism: 'plugin.prompt' | 'plugin.context'): Promise<void> {
+  const outcome = await tellEvent($, event, null, await hookBudget($), { extra, mechanisms: [mechanism] })
+  if (outcome.kind === 'signed-out' || outcome.kind === 'abandoned') {
+    notToldToast($, `the "${event}" text was not told: ${outcome.kind}`, '')
+    return
+  }
+  if (outcome.kind === 'refused') {
+    notToldToast($, `the "${event}" text could not be read`, outcome.text)
+    return
+  }
+  for (const text of outcome.entries) await (mechanism === 'plugin.prompt' ? tellModelAwake($, text) : tellModel($, text))
 }
 
 // The write the operator asked for already happened: say the model was not told, and carry the row it was meant to read (the
@@ -1011,7 +1030,7 @@ function disconnect($: any, hold: BandHold): Promise<void> {
     if (left === 'refused') return
     // the band goes to no work at once (the agent stays), then reads the truth; the model, which did not make the call, is told in its chat
     await update($, view, cur => leftView(cur))
-    detach($, 'Plan update', tellModel($, disconnectNote(left)).then(() => refresh($, true)))
+    detach($, 'Plan update', tellEventToModel($, 'band.disconnect', { left_ref: left.ref, left_name: left.name }, 'plugin.context').then(() => refresh($, true)))
   })
 }
 
@@ -2581,7 +2600,7 @@ async function syncReadyOnce($: any, token: LookToken, again = true): Promise<vo
     await update($, readyLoop, cur => (cur === null ? null : { ...cur, phase: 'working' }))
     // a claim can hand another agent, and a model carrying on with a job would go on signing as the old one. Not on a job about to clear. Detached: a prompt's promise is not known to settle when it merges into a queued turn
     const last = (await read($, readyLoop))?.agentName ?? null
-    if (holds && server?.ended !== true && last !== null && last !== session.agent.name) detach($, 'Ready list', tellModelAwake($, readyAgentChanged(session.agent.name)))
+    if (holds && server?.ended !== true && last !== null && last !== session.agent.name) detach($, 'Ready list', tellEventToModel($, 'session.agent_changed', { agent_name: session.agent.name }, 'plugin.prompt'))
     await update($, readyLoop, cur => (cur === null ? null : { ...cur, agentName: session.agent.name }))
     return
   }
@@ -3262,11 +3281,14 @@ async function takeFinishedAgents($: any): Promise<FinishedAgent[]> {
 async function subagentStopEntries($: any, budget: Budget, extra: FinishedAgent[] = []): Promise<string[]> {
   const finished = [...(await takeFinishedAgents($)), ...extra]
   if (finished.length === 0) return []
-  const outcome = await tellEvent($, 'subagent.stop', null, budget, { extra: { sub_agent_id: finished.map(f => f.id).join(', ') } })
+  // who finished is the `subagent.finished` text, then the `subagent.stop` texts
+  const named = await tellEvent($, 'subagent.finished', null, budget, { extra: { sub_agent_labels: finished.map(f => f.label).join('; ') } })
   // a delivery that failed is told as the hold line and kept on the hold to be told again, never dropped
+  if (named.kind === 'refused') return [named.text]
+  const outcome = await tellEvent($, 'subagent.stop', null, budget, { extra: { sub_agent_id: finished.map(f => f.id).join(', ') } })
   if (outcome.kind === 'refused') return [outcome.text]
-  const texts = textsOf(outcome)
-  return texts.length === 0 ? [] : [finishedAgentsText(finished.map(f => f.label), texts.join('\n\n'))]
+  const texts = [...textsOf(named), ...textsOf(outcome)]
+  return texts.length === 0 ? [] : [texts.join('\n\n')]
 }
 
 async function takeEndedSession($: any): Promise<string | null> {
@@ -3300,10 +3322,10 @@ const startEventOf = (start: NonNullable<PendingStart>): string | null => (start
 // plugin's: it is the `clock_time` slot of the bundle's `prompt.submit` texts (AC 72124).
 // The start is TAKEN by the hook (`takePendingStart`) before the start's own slow reads, in the one order of arrival, so two hooks landing together (a fresh desktop session's first prompt runs the hook twice) never both tell it.
 async function noticeStartEntries($: any, pending: PendingStart, trigger: 'prompt' | 'tool', agent: string, budget: Budget): Promise<string[]> {
-  const disk = await diskLine($, trigger, agent)
+  const disk = await diskEntries($, trigger, agent, budget)
   // only the main agent is told its checkout is behind (the plugin knows the session's folder, never a sub-agent's own)
-  const behind = agent === MAIN_AGENT ? await appVersionNotice($) : null
-  const head = [...(disk === null ? [] : [disk]), ...(behind === null ? [] : [behind])]
+  const behind = agent === MAIN_AGENT ? await appVersionNotice($, budget) : []
+  const head = [...disk, ...behind]
   const start = pending === null ? null : await renderStart($, pending, budget)
   // the role is an entry of its own, never joined with an event text
   const role = agent === MAIN_AGENT ? await roleEntries($, budget) : []
@@ -3362,9 +3384,9 @@ async function noteDashboardVersion($: any, version: string | undefined): Promis
 
 // The line telling the agent to rebase, or null. A dashboard version and a folder are compared ONCE (the pair is claimed before the slow reads, so hooks landing together tell it once, and a
 // pair already compared costs nothing): the checkout's version is `<git toplevel>/50ARMS_VERSION`, and a repo without that file carries none. A new dashboard version or another folder compares again.
-async function appVersionNotice($: any): Promise<string | null> {
+async function appVersionNotice($: any, budget: Budget): Promise<string[]> {
   const dashboard = (await read($, appVersion)).dashboard
-  if (dashboard === null) return null
+  if (dashboard === null) return []
   const cwd = String(await $.session.cwd())
   const pair = `${dashboard}\n${cwd}`
   const claim = { won: false }
@@ -3373,11 +3395,12 @@ async function appVersionNotice($: any): Promise<string | null> {
     claim.won = true
     return { ...cur, checked: pair }
   })
-  if (!claim.won) return null
+  if (!claim.won) return []
   try {
-    return appVersionLine(await checkoutVersionText($, cwd), dashboard)
+    const behind = checkoutBehind(await checkoutVersionText($, cwd), dashboard)
+    return behind === null ? [] : textsOrRefusal(await tellEvent($, 'checkout.behind', null, budget, { extra: { dashboard_version: behind.dashboard, checkout_version: behind.checkout } }))
   } catch (err: any) {
-    return versionFaultLine(dashboard, String(err?.message ?? err))
+    return [versionFaultLine(dashboard, String(err?.message ?? err))]
   }
 }
 
@@ -3393,29 +3416,39 @@ async function checkoutVersionText($: any, cwd: string): Promise<string | null> 
 // tool call after it tells) and autonomous tool calls, sub-agents' included. A tool call answers from the last measurement and, once it is older
 // than DISK_MEASURE_MS, refreshes it in the background (a person's prompt measures again before it answers). An unchanged notice is repeated to
 // the same agent only after DISK_REPEAT_MS.
-async function diskLine($: any, trigger: 'prompt' | 'tool', agent: string): Promise<string | null> {
+async function diskEntries($: any, trigger: 'prompt' | 'tool', agent: string, budget: Budget): Promise<string[]> {
   const now = await $.clock.now()
-  const text = await diskText($, trigger, now)
-  let line: string | null = null
+  const facts = await diskReading($, trigger, now)
+  let tell = false
   await update($, diskTold, told => {
-    const d = diskDecision(text, now, told, trigger, agent)
-    line = d.line
+    const d = diskDecision(diskKey(facts), now, told, trigger, agent)
+    tell = d.line !== null
     return d.told
   })
-  return line
+  if (!tell) return []
+  // the window is the more urgent, then the plugin's own fault lines, then the free space; every sentence about them is the bundle's
+  const agentId = agent === MAIN_AGENT ? null : agent
+  const entries: string[] = []
+  if (facts.window !== null) entries.push(...textsOrRefusal(await tellEvent($, 'disk.maintenance_window', agentId, budget, { extra: { window_opened_at: facts.window.openedAt, window_reason: facts.window.reason } })))
+  entries.push(...facts.floor)
+  if (facts.low !== null) {
+    entries.push(...textsOrRefusal(await tellEvent($, 'disk.low', agentId, budget, { extra: { disk_free_amount: facts.low.free, disk_floor_amount: facts.low.floor } })))
+    if (facts.low.hardMinimum !== null) entries.push(...textsOrRefusal(await tellEvent($, 'disk.below_hard_minimum', agentId, budget, { extra: { disk_hard_minimum_amount: facts.low.hardMinimum } })))
+  }
+  return entries
 }
 
-async function diskText($: any, trigger: 'prompt' | 'tool', now: number): Promise<string> {
+async function diskReading($: any, trigger: 'prompt' | 'tool', now: number): Promise<DiskFacts> {
   const last = await read($, diskMeasured)
   if (trigger === 'tool' && last !== null) {
     if (now - last.at >= DISK_MEASURE_MS) detach($, 'Disk check', probeDisk($))
-    return last.text
+    return last.facts
   }
   return probeDisk($)
 }
 
 // What is running now, by session, so concurrent hooks share one probe and one home lookup instead of each starting their own.
-const diskProbes = new Map<string, Promise<string>>()
+const diskProbes = new Map<string, Promise<DiskFacts>>()
 const homeLookups = new Map<string, Promise<string | null>>()
 function sharedRun<T>(running: Map<string, Promise<T>>, key: string, run: () => Promise<T>): Promise<T> {
   const found = running.get(key)
@@ -3425,12 +3458,12 @@ function sharedRun<T>(running: Map<string, Promise<T>>, key: string, run: () => 
   return started
 }
 
-async function probeDisk($: any): Promise<string> {
+async function probeDisk($: any): Promise<DiskFacts> {
   return sharedRun(diskProbes, String(await $.session.id()), async () => {
     const measured = await measureDisk($)
     const at = await $.clock.now()
-    await update($, diskMeasured, () => ({ text: measured.text, freeBytes: measured.freeBytes, at }))
-    return measured.text
+    await update($, diskMeasured, () => ({ facts: measured.facts, freeBytes: measured.freeBytes, at }))
+    return measured.facts
   })
 }
 
@@ -3440,7 +3473,7 @@ const WSL_USERS_DIR = '/mnt/c/Users'
 
 // '' for a machine this policy does not concern (no C:, or no Windows home holding a `.danxbot` directory: the machine has not opted in to 50 Arms'
 // machine tooling) or when all is well; else the notice. Every fault is ONE line, never silence.
-async function measureDisk($: any): Promise<{ text: string; freeBytes: number | null }> {
+async function measureDisk($: any): Promise<{ facts: DiskFacts; freeBytes: number | null }> {
   try {
     // each variable by its own literal name: `$.env.get` takes a literal so the variables a module reads can be listed
     const env: DiskEnv = {
@@ -3451,9 +3484,9 @@ async function measureDisk($: any): Promise<{ text: string; freeBytes: number | 
       DANXBOT_DISK_HARD_MINIMUM_GIB: await $.env.get('DANXBOT_DISK_HARD_MINIMUM_GIB'),
     }
     const kind = hostKindOf(env)
-    if (kind === null) return { text: '', freeBytes: null }
+    if (kind === null) return { facts: NO_DISK_FACTS, freeBytes: null }
     const home = await machineHome($, kind, env)
-    if (home === null) return { text: '', freeBytes: null }
+    if (home === null) return { facts: NO_DISK_FACTS, freeBytes: null }
     const dir = joinPath(kind, home, '.danxbot')
     const floorsPath = joinPath(kind, dir, 'machine-disk-floors')
     const windowPath = joinPath(kind, dir, 'compaction-window')
@@ -3463,9 +3496,9 @@ async function measureDisk($: any): Promise<{ text: string; freeBytes: number | 
     const free = await $.process.run(freeSpaceArgv(kind, env), { timeoutMs: DISK_PROBE_TIMEOUT_MS })
     if (free.exitCode !== 0) throw new Error(`the free-space command exited ${free.exitCode}`)
     const freeBytes = parseFreeBytes(free.stdout)
-    return { text: diskNotice({ env, freeBytes, floorsText, floorsPath, windowText }), freeBytes }
+    return { facts: diskNotice({ env, freeBytes, floorsText, floorsPath, windowText }), freeBytes }
   } catch (err) {
-    return { text: diskFault(err), freeBytes: null }
+    return { facts: diskFault(err), freeBytes: null }
   }
 }
 

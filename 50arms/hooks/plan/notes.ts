@@ -2,12 +2,6 @@ import type { PermissionRequest } from '../../types'
 
 // The rows the operator's band actions append for the model: the model did not make
 // these calls, so it is told. The person never reads them.
-// A person's Disconnect takes the session off its plan or card and leaves it signed in with its team agent. The model did not make the call, so it is told the session is on no plan or card now, and that
-// it joins one again only when the person asks. The plan or card left is named by ref and name: the session must not write to the plan routes.
-export function disconnectNote(left: { ref: string; name: string }): string {
-  return `[50 Arms plan] The operator disconnected this session from ${left.ref} "${left.name}" with the band's Disconnect button. It is still signed in and keeps its team agent, but it holds no plan or card now. Do not call session_connect to join a plan or card, and do not write to /api/plans/mine routes, until the operator asks you to.`
-}
-
 // A person's Revoke ends the session's sign-in, so the model is told not to connect again: only the person's Sign in restarts the session.
 // `ended`: the sign-in was ended (false: that call failed, the key still works but the person has taken the session back).
 export function revokeNote(d: { ended: boolean }): string {
@@ -29,17 +23,6 @@ export function signInNote(target: string | null, connected: boolean): string {
 // its slot, so without this the model learns the outcome only by retrying.
 type Asked = Pick<PermissionRequest, 'code' | 'permissions'>
 const askedList = (permissions: readonly string[]) => (permissions.length > 0 ? permissions.join(', ') : 'the permissions it asked for')
-
-export function permissionGrantedNote(r: Asked, granted: readonly string[]): string {
-  const missing = r.permissions.filter(p => !granted.includes(p))
-  const head = `[50 Arms] The person approved permission request ${r.code} (asked: ${askedList(r.permissions)})`
-  if (granted.length === 0) return `${head} but granted none of it: do not retry the refused call.`
-  return `${head}: this session's key was granted ${granted.join(', ')}.${missing.length > 0 ? ` Not granted: ${missing.join(', ')}.` : ''} Retry the call that was refused for lacking it.`
-}
-
-export function permissionDeniedNote(r: Asked): string {
-  return `[50 Arms] The person denied permission request ${r.code} (asked: ${askedList(r.permissions)}). This session's key did not gain it: do not retry the refused call, and ask again only if the person says to.`
-}
 
 export function permissionExpiredNote(r: Asked): string {
   return `[50 Arms] Permission request ${r.code} (asked: ${askedList(r.permissions)}) expired before it was decided: this session's dashboard session or key ended. Reconnect the session (call session_connect), then call request_permission again for ${askedList(r.permissions)}.`

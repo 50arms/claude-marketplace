@@ -4,13 +4,13 @@ import "./run-tests-with-npm-test.generated"
 import { describe, expect } from 'claude-code/testing'
 
 import * as readyLoopModule from '../hooks/ready/loop'
-import { READY_COMMAND, READY_TYPED, READY_DISCONNECTED, READY_REVOKED, READY_JOINING, READY_JUDGE_PROMPT, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PERMISSION_ENDED, READY_RELAY_OLDER, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_STOPPED, READY_TICK_MS, READY_USAGE, CLEAR_SPENT_PREFIX, clearSpentKey, holdsWork, markAnswerOf, parseGithubOrigin, readyAdopted, readyAgentChanged, readyJoined, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyRejoined, readyRevoked, readyWorkTaken, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from '../hooks/ready/loop'
+import { READY_COMMAND, READY_TYPED, READY_DISCONNECTED, READY_REVOKED, READY_JOINING, READY_JUDGE_PROMPT, READY_NOT_GITHUB, READY_NOT_REGISTERED, READY_NO_AGENT_AGAIN, READY_NO_ORIGIN, READY_OFF, READY_PERMISSION_ENDED, READY_RELAY_OLDER, READY_SHELL_HOLDS_RESET, READY_SIGN_IN_ENDED, READY_STOPPED, READY_TICK_MS, READY_USAGE, CLEAR_SPENT_PREFIX, clearSpentKey, holdsWork, markAnswerOf, parseGithubOrigin, readyAdopted, readyJoined, readyJoinedOnWork, readyLoopUnread, readyMarkRefused, readyRejoined, readyRevoked, readyWorkTaken, repoNameCandidates, repoNameFor, serverLoopOf, sessionIdOf, stoppedByPerson } from '../hooks/ready/loop'
 import { LOCK_STALE_MS, NOT_CONNECTED_RETRY_MS, SIGN_IN_MIN_ROUND_MS, toolName } from '../hooks/plan/config'
 import { USED_RELEASE_KEEP } from '../hooks/compaction/control'
 import { sessionFilePath } from '../hooks/relay/session-file'
 import { NO_AGENT, signInStep } from '../hooks/plan/sign-in'
 import { connectToolOutcome, isSignedOut, textOutcome, toolOutcome } from '../hooks/plan/mcp'
-import { leaveSession, takeLoadPauseReads, test, BAD_SESSION_ID, CLEARED_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, REGISTRATION_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest, answerEngineClear, engineClears } from './plan-kit'
+import { agentChangedText, leaveSession, takeLoadPauseReads, test, BAD_SESSION_ID, CLEARED_SESSION_ID, BAD_SESSION_ID_PATH, SESSION_ID, HOME_DIR, OWN_SESSION, APPROVAL_PENDING, APPROVAL_REQUIRED, APPROVAL_URL, REGISTRATION_URL, DASHBOARD_URL, KEY_REVOKED_HALT, REVOKER, EVENT_TEXT, dashboard, linksOf, startSession, assertHoldsUsed, makeTest, answerEngineClear, engineClears } from './plan-kit'
 // CP-67: the name the engine gives the command a person types as /50arms:ready: the plugin's skill, under the plugin's name
 const TYPED_READY = '50arms:ready'
 
@@ -1677,7 +1677,7 @@ describe('the ready-agent loop', () => {
     d.world.agentNext = { id: 7, name: 'Noor', avatar_url: null }
     await tick(d)
     await tick(d)
-    expect(d.relay.submitted.filter((t: string) => t.includes(readyAgentChanged('Noor')))).toHaveLength(1)
+    expect(d.relay.submitted.filter((t: string) => t.includes(agentChangedText('Noor')))).toHaveLength(1)
     expect(d.clearRuns).toEqual([])
   })
 
@@ -1982,7 +1982,7 @@ describe('the ready-agent loop', () => {
     await d.clock.advance(60_000)
     await d.clock.settle()
     await tick(d)
-    expect(d.relay.submitted.filter((t: string) => t.includes(readyAgentChanged('Noor')))).toHaveLength(1)
+    expect(d.relay.submitted.filter((t: string) => t.includes(agentChangedText('Noor')))).toHaveLength(1)
   })
 
   test('a session with no agent free retries in the background: no claim counts as its own work', async ($, on) => {

@@ -1,4 +1,4 @@
-import type { DiskTold } from '../../types'
+import type { DiskFacts, DiskTold } from '../../types'
 
 // The machine's free-space warning for every session. The Windows dev machine keeps two limits in one file, `<home>/.danxbot/machine-disk-floors`
 // (floor_gib warns, hard_minimum_gib refuses host test runs), and a marker file `<home>/.danxbot/compaction-window` while Docker's data disks are
@@ -102,43 +102,42 @@ export function parseWindow(text: string): Window {
   return { openedAtMs: seconds * 1000, reason: rest.join('\n').trim() }
 }
 
-// the window first (more urgent), then the free-space line. `floors` null: the limits file is missing, said loudly, free space not judged.
+// What the machine's disk state says, as facts: the bundle's `disk.*` events carry every sentence told about the window and the free space, and the
+// plugin supplies only these figures. `floor` holds the plugin's own fault lines (a missing or unreadable limits file, a failed check): they are the
+// floor of this notice and say nothing of the window or the free space. `floors` null: the limits file is missing, said loudly, free space not judged.
 // The make targets exist only in the dashboard repo checkout and this notice appears in every repo, so it says where to run them.
-export function noticeText(input: { freeBytes: number; floors: Floors | null; floorsPath: string; window: Window | null }): string {
-  const lines: string[] = []
-  if (input.window) {
-    lines.push(
-      `MAINTENANCE WINDOW OPEN since ${new Date(input.window.openedAtMs).toISOString()}: ${input.window.reason}`,
-      'Docker Desktop and WSL are about to be stopped to compact their data disks. Pause: start no test run, build, deploy or dispatch, finish or park what is running, write your state to the card, and tell the operator you are paused. The window stays open until `make compact-docker-disk STAGE=finish` (run from the dashboard repo checkout) closes it.',
-    )
-  }
+export const floorsUnavailableLine = (floorsPath: string): string => `DISK FLOORS UNAVAILABLE: ${floorsPath} is missing, so C: is not judged against a floor. Run \`${SEED_COMMAND}\` from the dashboard repo checkout.`
+
+export function diskFacts(input: { freeBytes: number; floors: Floors | null; floorsPath: string; window: Window | null }): DiskFacts {
+  const window = input.window === null ? null : { openedAt: new Date(input.window.openedAtMs).toISOString(), reason: input.window.reason }
   if (input.floors === null) {
-    lines.push(`DISK FLOORS UNAVAILABLE: ${input.floorsPath} is missing, so C: is not judged against a floor. Run \`${SEED_COMMAND}\` from the dashboard repo checkout.`)
-    return lines.join('\n')
+    return { floor: [floorsUnavailableLine(input.floorsPath)], window, low: null }
   }
-  if (input.freeBytes < input.floors.floorBytes) {
-    lines.push(
-      `LOW DISK: C: has ${formatGiB(input.freeBytes)} free, under the ${formatGiB(input.floors.floorBytes)} floor.` +
-        (input.freeBytes < input.floors.hardMinimumBytes ? ` Under the ${formatGiB(input.floors.hardMinimumBytes)} hard minimum: host test runs refuse.` : ''),
-      'Tell the operator now. Start no image build or large install. From the dashboard repo checkout, `make machine-report` shows what is reclaimable and `make sweep-machine` reclaims it; the Docker data disk only returns space through a compaction window (`make compact-docker-disk STAGE=prepare`).',
-    )
-  }
-  return lines.join('\n')
+  const low =
+    input.freeBytes < input.floors.floorBytes
+      ? { free: formatGiB(input.freeBytes), floor: formatGiB(input.floors.floorBytes), hardMinimum: input.freeBytes < input.floors.hardMinimumBytes ? formatGiB(input.floors.hardMinimumBytes) : null }
+      : null
+  return { floor: [], window, low }
 }
 
-export function diskFault(err: unknown): string {
-  return `DISK CHECK FAILED: ${String((err as any)?.message ?? err).slice(0, 300)}`
-}
+export const NO_DISK_FACTS: DiskFacts = { floor: [], window: null, low: null }
+
+export const diskFaultLine = (err: unknown): string => `DISK CHECK FAILED: ${String((err as any)?.message ?? err).slice(0, 300)}`
+
+export const diskFault = (err: unknown): DiskFacts => ({ floor: [diskFaultLine(err)], window: null, low: null })
 
 // The facts register.tsx gathered. `floorsText` / `windowText` null: the file is absent. A fault (unparseable file, unreadable drive) is ONE line.
-export function diskNotice(input: { env: DiskEnv; freeBytes: number; floorsText: string | null; floorsPath: string; windowText: string | null }): string {
+export function diskNotice(input: { env: DiskEnv; freeBytes: number; floorsText: string | null; floorsPath: string; windowText: string | null }): DiskFacts {
   try {
     const floors = input.floorsText === null ? null : applyOverrides(parseFloors(input.floorsText), input.env)
-    return noticeText({ freeBytes: input.freeBytes, floors, floorsPath: input.floorsPath, window: input.windowText === null ? null : parseWindow(input.windowText) })
+    return diskFacts({ freeBytes: input.freeBytes, floors, floorsPath: input.floorsPath, window: input.windowText === null ? null : parseWindow(input.windowText) })
   } catch (err: any) {
     return diskFault(err)
   }
 }
+
+// What an agent is remembered as told: '' when the facts say nothing, else the facts themselves, so a changed figure is a changed notice.
+export const diskKey = (facts: DiskFacts): string => (facts.floor.length === 0 && facts.window === null && facts.low === null ? '' : JSON.stringify(facts))
 
 // Whether to hand `text` to `agent` now. A person's prompt always carries a notice; a tool call (autonomous turns have no prompt) only on a state change
 // or once DISK_REPEAT_MS has passed since THAT agent was told, so a sub-agent started right after the main loop was told still hears it once.

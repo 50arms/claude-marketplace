@@ -129,8 +129,10 @@ export type StampState = { at: number; day: string } | null
 
 // the disk notice last handed to each agent (the main thread is 'main', a sub-agent its id): its text and when (epoch ms). An agent with nothing to be told has no entry.
 export type DiskTold = Record<string, { text: string; at: number }>
-// the last disk measurement: the notice text it produced ('' when all is well) and when (epoch ms); null before the first or after a session start.
-export type DiskMeasured = { text: string; freeBytes: number | null; at: number } | null
+// what a disk measurement found: the plugin's own fault lines, the open maintenance window (its ISO time and reason) and the free space against its floor (each amount as the notice shows it; `hardMinimum` only when free space is under it too). Every sentence told of the window and the low disk is the bundle's.
+export type DiskFacts = { floor: string[]; window: { openedAt: string; reason: string } | null; low: { free: string; floor: string; hardMinimum: string | null } | null }
+// the last disk measurement: its facts and when (epoch ms); null before the first or after a session start.
+export type DiskMeasured = { facts: DiskFacts; freeBytes: number | null; at: number } | null
 // where the machine's Windows home is, resolved once per session (a failure is kept too, so a stalled interop call is never retried per tool call).
 export type DiskHome = { home: string } | { fault: string } | null
 
