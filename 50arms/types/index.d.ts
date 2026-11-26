@@ -177,15 +177,16 @@ export type BundleRule = { ref: string; content_hash: string }
 
 export type BundleSection = { label: string; kind: string; text: string; chars: number; rules: BundleRule[]; slots: string[] }
 
-export type BundleAttachment = { attachment_id: number; mechanism: string; frequency: Frequency; matcher: Record<string, string> | null; sections: BundleSection[] }
+export type BundleAttachment = { attachment_id: number; mechanism: string; frequency: Frequency; matcher: Record<string, string> | null; section_ids: string[] }
 
 export type BundleMechanism = { mechanism: string; cap: number | null; over_cap_pointer: string | null }
 
 export type BundleComputed = { key: string; mechanism: string; frequency: Frequency; text: string; chars: number; rules: BundleRule[] }
 
-export type BundleEvent = { event: string; matchers: string[]; hook_slots: string[]; mechanisms: BundleMechanism[]; attachments: BundleAttachment[]; computed: BundleComputed[] }
+export type BundleEvent = { event: string; matchers: string[]; hook_slots: string[]; mechanism_keys: string[]; attachments: BundleAttachment[]; computed: BundleComputed[] }
 
-export type Bundle = { version: string; min_plugin_version: string; floor_lines_plugin_version: string | null; events: BundleEvent[] }
+// each section and each mechanism is listed once: an event names its mechanisms by key and an attachment its sections by id
+export type Bundle = { version: string; min_plugin_version: string; floor_lines_plugin_version: string | null; sections: Record<string, BundleSection>; mechanisms: BundleMechanism[]; events: BundleEvent[] }
 
 export type Held = { bundle: Bundle; confirmedAt: number }
 

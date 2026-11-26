@@ -84,7 +84,7 @@ function attachmentOf(v: unknown, where: string): BundleAttachment {
     matcher = {}
     for (const [k, g] of Object.entries(m)) matcher[k] = isString(g) ? g : shape(`${where}.matcher.${k} is not a glob`)
   }
-  return { attachment_id: o.attachment_id, mechanism: o.mechanism, frequency: frequencyOf(o.frequency, where), matcher, sections: list(o.sections, `${where}.sections`).map((s, i) => sectionOf(s, `${where}.sections[${i}]`)) }
+  return { attachment_id: o.attachment_id, mechanism: o.mechanism, frequency: frequencyOf(o.frequency, where), matcher, section_ids: list(o.section_ids, `${where}.section_ids`).map(id => (isString(id) ? id : shape(`${where}.section_ids holds a non-text`))) }
 }
 
 function computedOf(v: unknown, where: string): BundleComputed {
@@ -93,22 +93,23 @@ function computedOf(v: unknown, where: string): BundleComputed {
   return { key: o.key, mechanism: o.mechanism, frequency: frequencyOf(o.frequency, where), text: o.text, chars: o.chars, rules: rulesOf(o.rules, where) }
 }
 
+function mechanismListed(v: unknown, where: string): BundleMechanism {
+  const mo = record(v, where)
+  if (!isString(mo.mechanism)) shape(`${where} has no mechanism`)
+  const cap = mo.cap === null || mo.cap === undefined ? null : isCount(mo.cap) ? mo.cap : shape(`${where}.cap is not a count`)
+  const pointer = mo.over_cap_pointer === null || mo.over_cap_pointer === undefined ? null : isString(mo.over_cap_pointer) ? mo.over_cap_pointer : shape(`${where}.over_cap_pointer is not text`)
+  return { mechanism: mo.mechanism, cap, over_cap_pointer: pointer }
+}
+
 function eventOf(v: unknown, where: string): BundleEvent {
   const o = record(v, where)
   if (!isString(o.event)) shape(`${where} has no event key`)
   const strings = (x: unknown, name: string) => list(x, `${where}.${name}`).map(s => (isString(s) ? s : shape(`${where}.${name} holds a non-text`)))
-  const mechanisms = list(o.mechanisms, `${where}.mechanisms`).map((m): BundleMechanism => {
-    const mo = record(m, `${where}.mechanisms[]`)
-    if (!isString(mo.mechanism)) shape(`${where}.mechanisms[] has no mechanism`)
-    const cap = mo.cap === null || mo.cap === undefined ? null : isCount(mo.cap) ? mo.cap : shape(`${where}.mechanisms[].cap is not a count`)
-    const pointer = mo.over_cap_pointer === null || mo.over_cap_pointer === undefined ? null : isString(mo.over_cap_pointer) ? mo.over_cap_pointer : shape(`${where}.mechanisms[].over_cap_pointer is not text`)
-    return { mechanism: mo.mechanism, cap, over_cap_pointer: pointer }
-  })
   return {
     event: o.event,
     matchers: strings(o.matchers, 'matchers'),
     hook_slots: strings(o.hook_slots, 'hook_slots'),
-    mechanisms,
+    mechanism_keys: strings(o.mechanism_keys, 'mechanism_keys'),
     attachments: list(o.attachments, `${where}.attachments`).map((a, i) => attachmentOf(a, `${where}.attachments[${i}]`)),
     computed: list(o.computed, `${where}.computed`).map((c, i) => computedOf(c, `${where}.computed[${i}]`)),
   }
@@ -122,7 +123,27 @@ export function readBundleBody(body: unknown): BundleRead {
   const floor = o.floor_lines_plugin_version as string | null
   if (o.unchanged === true) return { kind: 'unchanged', version: o.version, floorLinesPluginVersion: floor }
   if (!isString(o.min_plugin_version)) shape('answer has no min_plugin_version')
-  return { kind: 'bundle', bundle: { version: o.version, min_plugin_version: o.min_plugin_version, floor_lines_plugin_version: floor, events: list(o.events, 'answer.events').map((e, i) => eventOf(e, `events[${i}]`)) } }
+  const sections: Record<string, BundleSection> = {}
+  for (const [id, section] of Object.entries(record(o.sections, 'answer.sections'))) sections[id] = sectionOf(section, `sections.${id}`)
+  const mechanisms = list(o.mechanisms, 'answer.mechanisms').map((m, i) => mechanismListed(m, `mechanisms[${i}]`))
+  const events = list(o.events, 'answer.events').map((e, i) => eventOf(e, `events[${i}]`))
+  // every name an event or an attachment gives must be listed: a delivery that cannot find its text or its cap is a bundle the plugin cannot read
+  for (const e of events) {
+    for (const key of e.mechanism_keys) if (!mechanisms.some(m => m.mechanism === key)) shape(`event "${e.event}" names the mechanism "${key}", which the bundle does not list`)
+    for (const a of e.attachments) for (const id of a.section_ids) if (!Object.prototype.hasOwnProperty.call(sections, id)) shape(`event "${e.event}" names the section "${id}", which the bundle does not list`)
+  }
+  return { kind: 'bundle', bundle: { version: o.version, min_plugin_version: o.min_plugin_version, floor_lines_plugin_version: floor, sections, mechanisms, events } }
+}
+
+// The path and query of the requested-endpoints read: the plugin names its own version (a call below the floor is refused 426). Only the after-compaction step asks.
+export const REQUESTED_ENDPOINTS_PATH = '/api/behavior-events/requested-endpoints'
+export const requestedEndpointsQuery = (pluginVersion: string): Record<string, string> => ({ plugin_version: pluginVersion })
+
+// The body of a requested-endpoints read: `{computed}`, the one computed text of the session's requested endpoints, or `computed: null` when it read no spec. Anything else is a BundleShapeError.
+export function readRequestedEndpointsBody(body: unknown): BundleComputed | null {
+  const o = record(body, 'requested-endpoints answer')
+  if (!Object.prototype.hasOwnProperty.call(o, 'computed')) shape('requested-endpoints answer has no computed (a text or null)')
+  return o.computed === null ? null : computedOf(o.computed, 'computed')
 }
 
 // ---- when a held bundle may be used ----
@@ -198,12 +219,15 @@ const length = (text: string): number => [...text].length
 
 const SLOT_NAMED = /\{\{slot:([a-z_][a-z0-9_]*)\}\}/g
 
+// The section an attachment names by id; readBundleBody has proved every id is listed, so a miss here is a bundle that was not read through it.
+const sectionOfId = (bundle: Bundle, id: string): BundleSection => bundle.sections[id] ?? shape(`names the section "${id}", which it does not list`)
+
 // The slots an event's texts name (its attachments' sections and its computed sections), so the plugin reads only what a text needs.
 export function namedSlots(bundle: Bundle, event: string): string[] {
   const e = bundle.events.find(x => x.event === event)
   if (e === undefined) return []
   const names = new Set<string>()
-  for (const a of e.attachments) for (const s of a.sections) for (const n of s.slots) names.add(n)
+  for (const a of e.attachments) for (const id of a.section_ids) for (const n of sectionOfId(bundle, id).slots) names.add(n)
   for (const c of e.computed) for (const m of c.text.matchAll(SLOT_NAMED)) names.add(m[1] as string)
   return [...names]
 }
@@ -222,7 +246,7 @@ export function fillSlots(text: string, slots: Record<string, string>): { text: 
 
 export const missingSlotsLine = (event: string, missing: string[]): string => `⚠ 50 Arms: the plugin could not fill the slot${missing.length === 1 ? '' : 's'} ${missing.map(m => `"${m}"`).join(', ')} of the "${event}" event, so a value above is missing. Tell the person.`
 
-// One text to tell on a moment: one per mechanism for the attachments (their sections joined), one per computed section. `overCap` is set when the filled text is longer than its mechanism carries: the caller writes `text` to a file and tells the pointer.
+// One text to tell on a moment: one per mechanism for the attachments (their sections joined), one per computed section. Whether what one hook tells through a mechanism is over that mechanism's cap is decided on the joined entry (`entriesOf`), never on one delivery.
 export type Delivery = {
   event: string
   mechanism: string
@@ -233,12 +257,15 @@ export type Delivery = {
   rules: BundleRule[]
   computedKey: string | null
   missingSlots: string[]
-  overCap: { cap: number; pointer: string; fullChars: number } | null
 }
 
 export type Decision = { deliveries: Delivery[]; told: Told }
 
-const mechanismOf = (event: BundleEvent, key: string): BundleMechanism => event.mechanisms.find(m => m.mechanism === key) ?? shape(`event "${event.event}" names no mechanism "${key}"`)
+// a delivery's mechanism is looked up on its event: an event that does not name it fails the delivery
+const mechanismOf = (bundle: Bundle, event: BundleEvent, key: string): BundleMechanism => {
+  if (!event.mechanism_keys.includes(key)) shape(`event "${event.event}" names no mechanism "${key}"`)
+  return bundle.mechanisms.find(m => m.mechanism === key) ?? shape(`mechanism "${key}" is not listed`)
+}
 
 function applies(frequency: Frequency, key: string, card: string | null, told: Told): boolean {
   const seen = told[key]
@@ -253,24 +280,19 @@ function noted(told: Told, key: string, frequency: Frequency, card: string | nul
   told[key] = frequency === 'once_per_session' || seen.includes(card ?? '') ? seen : [...seen, card ?? '']
 }
 
-function delivery(event: BundleEvent, mechanism: string, parts: { text: string; chars: number; rules: BundleRule[] }[], attachmentIds: number[], computedKey: string | null, slots: Record<string, string>): Delivery {
+function delivery(bundle: Bundle, event: BundleEvent, mechanism: string, parts: { text: string; chars: number; rules: BundleRule[] }[], attachmentIds: number[], computedKey: string | null, slots: Record<string, string>): Delivery {
   const filled = fillSlots(parts.map(p => p.text).join('\n\n'), slots)
   const text = filled.missing.length === 0 ? filled.text : `${filled.text}\n${missingSlotsLine(event.event, filled.missing)}`
-  const mech = mechanismOf(event, mechanism)
-  const fullChars = length(text)
-  let overCap: Delivery['overCap'] = null
-  if (mech.cap !== null && fullChars > mech.cap) {
-    if (mech.over_cap_pointer === null) shape(`mechanism "${mechanism}" of event "${event.event}" has a cap and no over_cap_pointer`)
-    overCap = { cap: mech.cap, pointer: mech.over_cap_pointer, fullChars }
-  }
+  mechanismOf(bundle, event, mechanism)
   const seen = new Set<string>()
   const rules = parts.flatMap(p => p.rules).filter(r => (seen.has(`${r.ref}@${r.content_hash}`) ? false : (seen.add(`${r.ref}@${r.content_hash}`), true)))
-  return { event: event.event, mechanism, text, chars: parts.reduce((n, p) => n + p.chars, 0), attachmentIds, rules, computedKey, missingSlots: filled.missing, overCap }
+  return { event: event.event, mechanism, text, chars: parts.reduce((n, p) => n + p.chars, 0), attachmentIds, rules, computedKey, missingSlots: filled.missing }
 }
 
 // What the moment delivers from the bundle, and what each context has now been told. A compaction or clear starts the context again BEFORE the event is decided, so a once-only text is told again after one.
 // Decisions are made one at a time by the caller (two hooks firing together never both deliver a once-only text): this function only reads `told` and returns the next.
-export function decide(bundle: Bundle, moment: Moment, told: Told): Decision {
+// `fetched`: computed texts the plugin fetched itself for this moment (the requested endpoints of a compaction), delivered like the event's own computed sections, after them.
+export function decide(bundle: Bundle, moment: Moment, told: Told, fetched: readonly BundleComputed[] = []): Decision {
   const event = bundle.events.find(e => e.event === moment.event)
   const base = startsNewContext(moment.event) ? NO_TOLD : told
   if (event === undefined) return { deliveries: [], told: base }
@@ -284,26 +306,55 @@ export function decide(bundle: Bundle, moment: Moment, told: Told): Decision {
     if (!applies(a.frequency, key, moment.card, next)) continue
     noted(next, key, a.frequency, moment.card)
     const group = groups.get(a.mechanism) ?? { parts: [], ids: [] }
-    group.parts.push({ text: a.sections.map(s => s.text).join('\n\n'), chars: a.sections.reduce((n, s) => n + s.chars, 0), rules: a.sections.flatMap(s => s.rules) })
+    const sections = a.section_ids.map(id => sectionOfId(bundle, id))
+    group.parts.push({ text: sections.map(s => s.text).join('\n\n'), chars: sections.reduce((n, s) => n + s.chars, 0), rules: sections.flatMap(s => s.rules) })
     group.ids.push(a.attachment_id)
     groups.set(a.mechanism, group)
   }
-  for (const [mechanism, group] of groups) deliveries.push(delivery(event, mechanism, group.parts, group.ids, null, moment.slots))
+  for (const [mechanism, group] of groups) deliveries.push(delivery(bundle, event, mechanism, group.parts, group.ids, null, moment.slots))
   // after the event's attachments: its computed sections (the plan's own text for it, the endpoints requested before a compaction), each by the mechanism and frequency the bundle names
-  for (const c of event.computed) {
+  for (const c of [...event.computed, ...fetched]) {
     const key = `computed:${c.key}`
     if (!carried(c.mechanism) || !applies(c.frequency, key, moment.card, next)) continue
     noted(next, key, c.frequency, moment.card)
-    deliveries.push(delivery(event, c.mechanism, [{ text: c.text, chars: c.chars, rules: c.rules }], [], c.key, moment.slots))
+    deliveries.push(delivery(bundle, event, c.mechanism, [{ text: c.text, chars: c.chars, rules: c.rules }], [], c.key, moment.slots))
   }
   return { deliveries, told: next }
 }
 
-// The text an over-cap delivery tells: the bundle's pointer sentence with the length and the file the full text was written to.
-export const pointerText = (d: Delivery, file: string): string => {
-  if (d.overCap === null) throw new Error('pointerText of a delivery that is not over its cap')
-  return d.overCap.pointer.replace(/\{\{slot:chars\}\}/g, String(d.overCap.fullChars)).replace(/\{\{slot:carrier_file\}\}/g, file)
+// What one hook tells through one mechanism: every delivery it joins there, attachments and computed texts together, as ONE entry. The cap is the mechanism's, applied to that whole entry (never to a delivery, so
+// three texts under the cap cannot add up past it): over it, the entry's whole text goes to a file and the entry told is the bundle's pointer sentence. `overCap` is set then; the caller writes `text` to the file.
+export type Entry = { mechanism: string; text: string; overCap: { cap: number; pointer: string; fullChars: number } | null }
+
+export function entriesOf(bundle: Bundle, deliveries: readonly Delivery[]): Entry[] {
+  const texts = new Map<string, string[]>()
+  for (const d of deliveries) texts.set(d.mechanism, [...(texts.get(d.mechanism) ?? []), d.text])
+  return [...texts].map(([mechanism, parts]) => {
+    const text = parts.join('\n\n')
+    const mech = bundle.mechanisms.find(m => m.mechanism === mechanism) ?? shape(`mechanism "${mechanism}" is not listed`)
+    const fullChars = length(text)
+    if (mech.cap === null || fullChars <= mech.cap) return { mechanism, text, overCap: null }
+    if (mech.over_cap_pointer === null) shape(`mechanism "${mechanism}" has a cap and no over_cap_pointer`)
+    return { mechanism, text, overCap: { cap: mech.cap, pointer: mech.over_cap_pointer, fullChars } }
+  })
 }
 
-// What is told of a delivery once its full text, if it was over the cap, sits in `file`.
-export const deliveredText = (d: Delivery, file: string | null): string => (d.overCap === null ? d.text : pointerText(d, file ?? shape('needs a file for an over-cap text')))
+// The text an over-cap entry tells: the bundle's pointer sentence with the length and the file the full text was written to.
+export const pointerText = (e: Entry, file: string): string => {
+  if (e.overCap === null) throw new Error('pointerText of an entry that is not over its cap')
+  return e.overCap.pointer.replace(/\{\{slot:chars\}\}/g, String(e.overCap.fullChars)).replace(/\{\{slot:carrier_file\}\}/g, file)
+}
+
+// What is told of an entry once its full text, if it was over the cap, sits in `file`.
+export const deliveredText = (e: Entry, file: string | null): string => (e.overCap === null ? e.text : pointerText(e, file ?? shape('needs a file for an over-cap text')))
+
+// `told` as it stands after a call whose deliveries were never made: the keys `mine` (the call's decisions) moved are put back to `before`, unless another hook moved them since. A once-only text counted told but never delivered would otherwise be lost when the owed event is told again.
+export function rewindTold(current: Told, before: Told, mine: Told): Told {
+  const next: Told = { ...current }
+  for (const key of new Set([...Object.keys(before), ...Object.keys(mine)])) {
+    if (JSON.stringify(mine[key]) === JSON.stringify(before[key]) || JSON.stringify(current[key]) !== JSON.stringify(mine[key])) continue
+    if (before[key] === undefined) delete next[key]
+    else next[key] = before[key] as string[]
+  }
+  return next
+}

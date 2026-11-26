@@ -7,7 +7,7 @@ import { floorLines } from '../hooks/bundle/floor'
 import { RETRY_WINDOW_MS } from '../hooks/bundle/hold'
 import { RETRY_DELAYS_MS } from '../hooks/bundle/reports'
 import { CONTEXT_DEADLINE_MS } from '../hooks/context/events'
-import { test, BUNDLE_FILE_PATH, relayPhase, EVENT_TEXT, NEXT_BUNDLE_VERSION, PLUGIN_VERSION, SURFACES, bundleEvent, bundleFileText, dashboard, deliveredReports, firstPrompt, startSession } from './plan-kit'
+import { test, BUNDLE_FILE_PATH, relayPhase, EVENT_TEXT, NEXT_BUNDLE_VERSION, PLUGIN_VERSION, SURFACES, bundleEvent, bundleFileText, dashboard, deliveredReports, firstPrompt, sha256Hex, startSession } from './plan-kit'
 
 const MIN = 60_000
 const NEWER_THAN_ANSWER = `${'c'.repeat(63)}3`
@@ -468,6 +468,149 @@ for (const surface of SURFACES) {
       expect(((await $.prompt.submit({ text: 'again' })).context ?? []).join('\n')).toContain(EVENT_TEXT('after_compaction'))
       await d.clock.settle()
       expect(deliveredReports(d, 'session.after_compaction')).toHaveLength(1)
+    })
+
+    // DX-8226, DX-8225: the bundle the plugin published 0.17.167 on was 72,000 to 83,000 characters, which Claude Code refuses as a tool result. These cases serve a bundle of that size through the kit's stand-in dashboard with the host-limit stand-in on
+    // (`hostLimited` refuses any tool result over its limit, as Claude Code does) and the stand-in MCP answering `reply_to_file` with the file form.
+    describe('a bundle of the hosted size and the requested endpoints', () => {
+      const HOSTED_CHARS = 83_059
+      const filler = (n: number) => `${String(n)} `.repeat(Math.ceil(10_000 / (String(n).length + 1))).slice(0, 10_000)
+      const hostedSize = (d: any) => {
+        // nine more events, each of ten thousand characters that are its own: the bundle lists each once, so it is the sum of what its events say
+        for (let n = 1; n <= 9; n++) d.world.bundle.events[`filler.${n}`] = bundleEvent(`filler.${n}`, [filler(n)], { id: 5000 + n * 10 })
+      }
+      const fileRead = (d: any): string => {
+        const path = d.world.fsReads.find((p: string) => p.includes('/tmp/danx-api/'))
+        expect(path).toBeDefined()
+        return d.world.files[path]
+      }
+
+      test('a session start and a sub-agent start each deliver their bundle texts from the file, with no loading or hold line, and report their deliveries', async ($, on) => {
+        const d = await started($, on)
+        hostedSize(d)
+        const start = await firstPrompt($, 'startup')
+        expect(start.startLines).toEqual([EVENT_TEXT('session_start')])
+        expect(fileRead(d).length).toBeGreaterThanOrEqual(HOSTED_CHARS)
+        const sub = await $.classic.SubagentStart(SUB)
+        expect(sub.additionalContext).toEqual([EVENT_TEXT('sub_agent_start')])
+        await d.clock.settle()
+        expect(deliveredReports(d, 'session.start')).toHaveLength(1)
+        expect(deliveredReports(d, 'subagent.start')).toHaveLength(1)
+        expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
+        // the bundle came only as a file: the host would have refused it as a tool result
+        expect(d.world.repliedAsFile).toContain('/api/behavior-events/bundle')
+        expect(start.context.join('\n')).not.toMatch(/exceeds maximum allowed tokens/)
+      })
+
+      test('the bundle is asked for as a file, and the file is checked against the sha256 the answer names: a bundle of the hosted size is read whole', async ($, on) => {
+        const d = await started($, on)
+        hostedSize(d)
+        await firstPrompt($, 'startup')
+        const body = fileRead(d)
+        expect(sha256Hex(body)).toMatch(/^[0-9a-f]{64}$/)
+        expect(JSON.parse(body).sections).toBeDefined()
+        expect(Object.keys(JSON.parse(body).sections).length).toBeGreaterThan(9)
+      })
+
+      test('an answer to a reply_to_file call that carries its body inline is a failed fetch: the session is held, never told from it', async ($, on) => {
+        const d = await started($, on)
+        d.world.inlineReplies = true
+        const first = await firstPrompt($, 'startup')
+        expect(first.context.join('\n')).toMatch(/loading/)
+        expect(first.context.join('\n')).not.toContain(EVENT_TEXT('session_start'))
+        expect(deliveredReports(d, 'session.start')).toEqual([])
+        d.world.inlineReplies = false
+        await d.clock.advance(60 * MIN)
+        expect(((await $.prompt.submit({ text: 'again' })).context ?? []).join('\n')).toContain(EVENT_TEXT('session_start'))
+      })
+
+      test('an answer whose file differs from the sha256 it names is a failed fetch: the session is held, never told from it', async ($, on) => {
+        const d = await started($, on)
+        d.world.replySha256 = 'f'.repeat(64)
+        const first = await firstPrompt($, 'startup')
+        expect(first.context.join('\n')).toMatch(/loading/)
+        expect(first.context.join('\n')).not.toContain(EVENT_TEXT('session_start'))
+        expect(deliveredReports(d, 'session.start')).toEqual([])
+        d.world.replySha256 = undefined
+        await d.clock.advance(60 * MIN)
+        expect(((await $.prompt.submit({ text: 'again' })).context ?? []).join('\n')).toContain(EVENT_TEXT('session_start'))
+      })
+
+      const ENDPOINTS = (chars: number) => {
+        const text = `Endpoints you read with 50arms_api_spec before this compaction:\n\n${'GET /api/issues/:id how-to. '.repeat(Math.ceil(chars / 28))}`.slice(0, chars)
+        return { key: 'requested_endpoints', mechanism: 'plugin.context', frequency: 'every', text, chars: text.length, rules: [{ ref: 'BPR-77', content_hash: 'd'.repeat(64) }] }
+      }
+      const COMPACTED = (d: any) => (d.world.bundle.events['session.after_compaction'] = bundleEvent('session.after_compaction', ['Compacted.'], { id: 330, cap: 10_000 }))
+
+      test('after a compaction the requested endpoints are fetched as a file and delivered through the temporary file the agent is told to read, and reported with no attachment id', async ($, on) => {
+        const d = await started($, on)
+        COMPACTED(d)
+        d.world.requestedEndpoints = ENDPOINTS(22_694)
+        const compacted = await firstPrompt($, 'compact')
+        const told = compacted.context.join('\n')
+        const file = /read (\/home\/u\/\.config\/danxbot\/behavior-text\/\S+\.txt)\./.exec(told)?.[1]
+        expect(file).toBeDefined()
+        // one file holds everything the hook put through the mechanism: the event's own text, then the endpoints
+        expect(d.world.files[file as string]).toBe(`Compacted.\n\n${ENDPOINTS(22_694).text}`)
+        expect(told).toMatch(/It is|characters/)
+        expect(told).not.toContain('GET /api/issues/:id how-to.')
+        expect(d.world.requestedEndpointReads).toEqual([{ plugin_version: PLUGIN_VERSION, reply_to_file: true }])
+        expect(d.world.repliedAsFile).toContain('/api/behavior-events/requested-endpoints')
+        await d.clock.settle()
+        const delivered = deliveredReports(d, 'session.after_compaction')
+        expect(delivered.map(r => r.attachment_ids)).toEqual([[330], []])
+        expect(delivered[1]).toMatchObject({ mechanism: 'plugin.context', rules: [{ ref: 'BPR-77', content_hash: 'd'.repeat(64) }] })
+      })
+
+      test('a compaction of a session that read no spec delivers the event\'s text and nothing more, and no other event asks for the requested endpoints', async ($, on) => {
+        const d = await started($, on)
+        COMPACTED(d)
+        await firstPrompt($, 'startup')
+        expect(d.world.requestedEndpointReads).toEqual([])
+        const compacted = await firstPrompt($, 'compact')
+        expect(compacted.startLines).toEqual(['Compacted.'])
+        expect(d.world.requestedEndpointReads).toHaveLength(1)
+        await d.clock.settle()
+        expect(deliveredReports(d, 'session.after_compaction')).toHaveLength(1)
+      })
+
+      test('requested endpoints that cannot be fetched hold the compacted context with nothing told or reported, and the next prompt tells the compaction once the fetch works', async ($, on) => {
+        const d = await started($, on)
+        COMPACTED(d)
+        d.world.requestedEndpoints = ENDPOINTS(1_000)
+        d.world.requestedEndpointsOverride = { status: 503, body: { error: 'dashboard_unreachable' } }
+        const first = await firstPrompt($, 'compact')
+        expect(first.context.join('\n')).toMatch(/loading/)
+        expect(first.context.join('\n')).not.toContain('Compacted.')
+        await d.clock.settle()
+        expect(deliveredReports(d, 'session.after_compaction')).toEqual([])
+        d.world.requestedEndpointsOverride = undefined
+        await d.clock.advance(60 * MIN)
+        const told = ((await $.prompt.submit({ text: 'again' })).context ?? []).join('\n')
+        expect(told).toContain('Compacted.')
+        expect(told).toContain('GET /api/issues/:id how-to.')
+        await d.clock.settle()
+        expect(deliveredReports(d, 'session.after_compaction')).toHaveLength(2)
+      })
+
+      test('a text over its mechanism\'s cap whose file cannot be written was not delivered: the context is held, never told a warning in its place, and its once-only text is told once the file can be written', async ($, on) => {
+        const d = await started($, on)
+        d.world.bundle.events['session.start'] = bundleEvent('session.start', ['x'.repeat(12_000)], { id: 100, frequency: 'once_per_session', cap: 10_000 })
+        d.world.carrierWriteFails = true
+        const first = await firstPrompt($, 'startup')
+        expect(first.context.join('\n')).toMatch(/loading/)
+        // the hold line states why it holds; the text itself is not told, whole or cut, and no warning line stands in for it
+        expect(first.context.join('\n')).not.toContain('x'.repeat(100))
+        expect(first.context.join('\n')).not.toContain('Tell the person')
+        await d.clock.settle()
+        expect(deliveredReports(d, 'session.start')).toEqual([])
+        d.world.carrierWriteFails = false
+        await d.clock.advance(60 * MIN)
+        const told = ((await $.prompt.submit({ text: 'again' })).context ?? []).join('\n')
+        expect(told).toMatch(/It is \d+ characters: read \/home\/u\/\.config\/danxbot\/behavior-text\/\S+\.txt/)
+        await d.clock.settle()
+        expect(deliveredReports(d, 'session.start')).toHaveLength(1)
+      })
     })
 
     describe('a held main conversation at a stop', () => {

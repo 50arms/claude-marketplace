@@ -4,8 +4,8 @@ import "./run-tests-with-npm-test.generated"
 // functions facts and reads their verdicts.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { BundleShapeError, bundleFileOf, bundleQuery, changeSignalOf, compareVersions, contextKey, decide, deliveredText, fillSlots, floorIsStale, globMatches, isCurrent, matcherHolds, readBundleBody, relayStreams, startsNewContext } from '../hooks/bundle/bundle'
-import type { Bundle, BundleAttachment, BundleEvent } from '../hooks/bundle/bundle'
+import { BundleShapeError, bundleFileOf, bundleQuery, changeSignalOf, compareVersions, contextKey, decide, deliveredText, entriesOf, fillSlots, floorIsStale, globMatches, isCurrent, matcherHolds, readBundleBody, readRequestedEndpointsBody, relayStreams, requestedEndpointsQuery, rewindTold, startsNewContext } from '../hooks/bundle/bundle'
+import type { Bundle, BundleAttachment, BundleEvent, BundleMechanism, BundleSection } from '../hooks/bundle/bundle'
 import { HOLD_LINES, LOADING_LINE, SIGN_IN_INVITATION, TOLD_ON, floorBody, floorLines, floorText } from '../hooks/bundle/floor'
 import { RETRY_WINDOW_MS, failureOf, holdOn, holdReport, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from '../hooks/bundle/hold'
 import { settleOwed } from '../hooks/bundle/state'
@@ -16,26 +16,56 @@ const V2 = 'b'.repeat(64)
 const RULE = { ref: 'BPR-1', content_hash: 'h1' }
 
 const section = (text: string, rules = [RULE]) => ({ label: 'BP-1', kind: 'policy', text, chars: [...text].length, rules, slots: [] as string[] })
-const attachment = (id: number, text: string, over: Partial<BundleAttachment> = {}): BundleAttachment => ({ attachment_id: id, mechanism: 'plugin.context', frequency: 'every', matcher: null, sections: [section(text)], ...over })
+// the sections the attachments below name by id: a bundle lists each once, so `bundle` takes them from here
+const SECTIONS: Record<string, BundleSection> = {}
+const attachment = (id: number, text: string, over: Partial<BundleAttachment> = {}): BundleAttachment => {
+  const sectionId = `${id}:${text}`
+  SECTIONS[sectionId] = section(text)
+  return { attachment_id: id, mechanism: 'plugin.context', frequency: 'every', matcher: null, section_ids: [sectionId], ...over }
+}
+const MECHANISMS: BundleMechanism[] = [{ mechanism: 'plugin.context', cap: 100, over_cap_pointer: 'It is {{slot:chars}} characters: read {{slot:carrier_file}}.' }, { mechanism: 'plugin.subagent_start', cap: null, over_cap_pointer: null }]
 const event = (key: string, attachments: BundleAttachment[], over: Partial<BundleEvent> = {}): BundleEvent => ({
   event: key,
   matchers: [],
   hook_slots: [],
-  mechanisms: [{ mechanism: 'plugin.context', cap: 100, over_cap_pointer: 'It is {{slot:chars}} characters: read {{slot:carrier_file}}.' }, { mechanism: 'plugin.subagent_start', cap: null, over_cap_pointer: null }],
+  mechanism_keys: ['plugin.context', 'plugin.subagent_start'],
   attachments,
   computed: [],
   ...over,
 })
-const bundle = (events: BundleEvent[], version = V1): Bundle => ({ version, min_plugin_version: '0.17.167', floor_lines_plugin_version: null, events })
+const bundle = (events: BundleEvent[], version = V1, mechanisms = MECHANISMS): Bundle => ({ version, min_plugin_version: '0.17.167', floor_lines_plugin_version: null, sections: { ...SECTIONS }, mechanisms, events })
 const moment = (key: string, over = {}) => ({ event: key, matchers: {}, slots: {}, card: null as string | null, mechanisms: null as readonly string[] | null, ...over })
 
 describe('reading a bundle answer', () => {
-  const body = { version: V1, min_plugin_version: '0.17.167', floor_lines_plugin_version: null, events: [{ event: 'session.start', matchers: [], hook_slots: ['clock_time'], mechanisms: [{ mechanism: 'plugin.context', cap: 10000, over_cap_pointer: 'p' }], attachments: [{ attachment_id: 7, mechanism: 'plugin.context', frequency: 'once_per_session', matcher: null, sections: [section('hello')] }], computed: [] }] }
+  const body = { version: V1, min_plugin_version: '0.17.169', floor_lines_plugin_version: null, sections: { s1: section('hello') }, mechanisms: [{ mechanism: 'plugin.context', cap: 10000, over_cap_pointer: 'p' }], events: [{ event: 'session.start', matchers: [], hook_slots: ['clock_time'], mechanism_keys: ['plugin.context'], attachments: [{ attachment_id: 7, mechanism: 'plugin.context', frequency: 'once_per_session', matcher: null, section_ids: ['s1'] }], computed: [] }] }
 
   test('reads a bundle', () => {
     const r = readBundleBody(body)
     expect(r.kind).toBe('bundle')
-    if (r.kind === 'bundle') expect(r.bundle.events[0]?.attachments[0]?.attachment_id).toBe(7)
+    if (r.kind === 'bundle') {
+      expect(r.bundle.events[0]?.attachments[0]?.attachment_id).toBe(7)
+      expect(r.bundle.sections.s1?.text).toBe('hello')
+      expect(r.bundle.mechanisms.map(m => m.mechanism)).toEqual(['plugin.context'])
+    }
+  })
+
+  test('refuses an attachment that names a section the bundle does not list, and an event that names a mechanism it does not list', () => {
+    expect(() => readBundleBody({ ...body, sections: {} })).toThrow(/names the section "s1", which the bundle does not list/)
+    expect(() => readBundleBody({ ...body, mechanisms: [] })).toThrow(/names the mechanism "plugin.context", which the bundle does not list/)
+  })
+
+  test('refuses a bundle in the shape that repeated every text in every event: it has no sections table', () => {
+    const { sections: _sections, ...old } = body
+    expect(() => readBundleBody(old)).toThrow(/answer.sections is not an object/)
+  })
+
+  test('reads the requested endpoints answer: its computed text, or null when the session read no spec', () => {
+    const computed = { key: 'requested_endpoints', mechanism: 'plugin.context', frequency: 'every', text: 'Endpoints you read', chars: 18, rules: [RULE] }
+    expect(readRequestedEndpointsBody({ computed })).toEqual(computed)
+    expect(readRequestedEndpointsBody({ computed: null })).toBeNull()
+    expect(() => readRequestedEndpointsBody({})).toThrow(/no computed/)
+    expect(() => readRequestedEndpointsBody({ computed: { key: 'requested_endpoints' } })).toThrow(BundleShapeError)
+    expect(requestedEndpointsQuery('0.17.169')).toEqual({ plugin_version: '0.17.169' })
   })
 
   test('reads the unchanged answer with the floor version', () => {
@@ -212,13 +242,46 @@ describe('deciding an event from the bundle', () => {
     expect(d.missingSlots).toEqual(['mood'])
   })
 
-  test('an over-cap text is delivered as the bundle pointer with the length and the file it was written to', () => {
+  test('an over-cap entry is delivered as the bundle pointer with the length and the file it was written to', () => {
     const long = 'x'.repeat(150)
     const b = bundle([event('session.start', [attachment(1, long)])])
-    const d = decide(b, moment('session.start'), {}).deliveries[0]!
-    expect(d.overCap).toEqual({ cap: 100, pointer: 'It is {{slot:chars}} characters: read {{slot:carrier_file}}.', fullChars: 150 })
-    expect(d.text).toBe(long)
-    expect(deliveredText(d, '/tmp/full.txt')).toBe('It is 150 characters: read /tmp/full.txt.')
+    const [entry] = entriesOf(b, decide(b, moment('session.start'), {}).deliveries)
+    expect(entry?.overCap).toEqual({ cap: 100, pointer: 'It is {{slot:chars}} characters: read {{slot:carrier_file}}.', fullChars: 150 })
+    expect(entry?.text).toBe(long)
+    expect(deliveredText(entry!, '/tmp/full.txt')).toBe('It is 150 characters: read /tmp/full.txt.')
+  })
+
+  test('the cap holds for everything one hook tells through a mechanism: texts that are each under it but add up past it are one entry over it', () => {
+    const b = bundle([event('session.start', [attachment(1, 'a'.repeat(60)), attachment(2, 'b'.repeat(60))], { computed: [{ key: 'plan_event_text', mechanism: 'plugin.context', frequency: 'every', text: 'c'.repeat(60), chars: 60, rules: [] }] })])
+    const deliveries = decide(b, moment('session.start'), {}).deliveries
+    expect(deliveries.map(d => d.text.length)).toEqual([122, 60])
+    const entries = entriesOf(b, deliveries)
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.text).toBe(`${'a'.repeat(60)}\n\n${'b'.repeat(60)}\n\n${'c'.repeat(60)}`)
+    expect(entries[0]?.overCap?.fullChars).toBe(184)
+  })
+
+  test('a mechanism with no cap never goes to a file, and each mechanism is its own entry', () => {
+    const b = bundle([event('session.start', [attachment(1, 'x'.repeat(500), { mechanism: 'plugin.subagent_start' }), attachment(2, 'short')])])
+    const entries = entriesOf(b, decide(b, moment('session.start'), {}).deliveries)
+    expect(entries.map(e => [e.mechanism, e.overCap])).toEqual([['plugin.subagent_start', null], ['plugin.context', null]])
+  })
+
+  test('requested endpoints fetched for the moment are delivered after the event\'s own texts, by their own mechanism and frequency', () => {
+    const b = bundle([event('session.after_compaction', [attachment(1, 'a')], { computed: [{ key: 'plan_event_text', mechanism: 'plugin.context', frequency: 'every', text: 'plan text', chars: 9, rules: [] }] })])
+    const fetched = [{ key: 'requested_endpoints', mechanism: 'plugin.context', frequency: 'every' as const, text: 'endpoints', chars: 9, rules: [RULE] }]
+    const d = decide(b, moment('session.after_compaction'), {}, fetched)
+    expect(d.deliveries.map(x => [x.computedKey, x.text, x.attachmentIds])).toEqual([[null, 'a', [1]], ['plan_event_text', 'plan text', []], ['requested_endpoints', 'endpoints', []]])
+  })
+
+  test('told is put back for the keys a call moved and no other hook has moved since', () => {
+    const before = { 'att:1': [''] }
+    const mine = { 'att:1': [''], 'att:2': [''] }
+    expect(rewindTold(mine, before, mine)).toEqual(before)
+    // another hook told att:3 meanwhile: only this call's own key goes back
+    expect(rewindTold({ ...mine, 'att:3': [''] }, before, mine)).toEqual({ ...before, 'att:3': [''] })
+    // another hook moved att:2 further since: it is theirs now
+    expect(rewindTold({ ...mine, 'att:2': ['', 'X-1'] }, before, mine)).toEqual({ ...before, 'att:2': ['', 'X-1'] })
   })
 
   test('a text of a mechanism the hook does not carry is never decided: it is not counted told and not delivered', () => {
@@ -351,7 +414,7 @@ describe('holds', () => {
 })
 
 describe('the report queue', () => {
-  const delivery = (id: number) => deliveryItem(V1, { event: 'session.start', mechanism: 'plugin.context', text: 't', chars: 1, attachmentIds: [id], rules: [RULE], computedKey: null, missingSlots: [], overCap: null }, '2026-01-01T00:00:00.000Z')
+  const delivery = (id: number) => deliveryItem(V1, { event: 'session.start', mechanism: 'plugin.context', text: 't', chars: 1, attachmentIds: [id], rules: [RULE], computedKey: null, missingSlots: [] }, '2026-01-01T00:00:00.000Z')
 
   test('a delivery item is the route shape: the version, event, attachments, mechanism, rules and characters as the bundle named them', () => {
     expect(delivery(5)).toEqual({ kind: 'delivery', version: V1, event: 'session.start', attachment_ids: [5], mechanism: 'plugin.context', rules: [RULE], chars: 1, delivered_at: '2026-01-01T00:00:00.000Z' })

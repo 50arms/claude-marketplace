@@ -4,8 +4,8 @@ import type { Register, SessionRateLimit } from 'claude-code'
 import type { AckInFlight, CompactingState, ConnectedPlan, PendingEvent, PlanView, PendingStart, PermissionRequest, ReadyLoop, RefreshGate, RelayState, ReportState, StampState, TurnState, AppVersionState, DiskHome, DiskMeasured, DiskTold } from '../types'
 import { CONTEXT_DEADLINE_MS, DEADLINE_REASON, SERVER_NOT_CONNECTED_REASON, isSideSessionNotice, restartAsk, restartFailureLine, restartNoticeText, RESTART_NOTICE_TOOL, SIGN_IN_SOURCE, sessionEvent } from './context/events'
 import type { RestartAsk, Told } from './context/events'
-import { BUNDLE_PATH, BUNDLE_POLL_MS, BundleShapeError, FLOOR_PATH, REPORTS_PATH, bundleFileOf, bundleQuery, changeSignalOf, decide, deliveredText, floorIsStale, isCurrent, mainContext, namedSlots, readBundleBody, relayStreams, startsNewContext } from './bundle/bundle'
-import type { Bundle, BundleFile, BundleRead, ChangeSignal, Decision, Delivery } from './bundle/bundle'
+import { BUNDLE_PATH, BUNDLE_POLL_MS, BundleShapeError, FLOOR_PATH, REPORTS_PATH, REQUESTED_ENDPOINTS_PATH, bundleFileOf, bundleQuery, changeSignalOf, decide, deliveredText, entriesOf, floorIsStale, isCurrent, mainContext, namedSlots, readBundleBody, readRequestedEndpointsBody, relayStreams, requestedEndpointsQuery, rewindTold, startsNewContext } from './bundle/bundle'
+import type { Bundle, BundleComputed, BundleFile, BundleRead, ChangeSignal, Decision, Delivery, Entry, Told } from './bundle/bundle'
 import { SIGN_IN_INVITATION, floorBody } from './bundle/floor'
 import { OWED_ARRIVED, failureOf as fetchFailureOf, holdOn, holdReport, leavesQueue, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from './bundle/hold'
 import type { Failure, Hold } from './bundle/hold'
@@ -416,24 +416,29 @@ let dashboardAnswered = false
 // x-danx-session-id header. EVERY call here is the plugin's background work, never the agent's own, so it carries
 // `background: true` (the MCP turns it into a request header): the dashboard keeps the session registered and live for it but does not take it as
 // the agent acting, which would end the agent's pause. The agent's own 50arms_api calls never pass through here. Any rejection (including the engine's "no such server") is an error shown as one.
-async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: number } = {}, server: string = SERVER): Promise<Api> {
+async function api($: any, method: string, path: string, extra: { query?: object; body?: object; board?: number; reply_to_file?: boolean } = {}, server: string = SERVER): Promise<Api> {
   let res
   try {
     res = await $.mcp.call(server, '50arms_api', { method, path, ...extra, background: true })
   } catch (err: any) {
     return failedCall(err)
   }
-  const outcome = await wholeAnswer($, toolOutcome(res))
+  const outcome = await wholeAnswer($, toolOutcome(res), extra.reply_to_file === true)
   // a dashboard call that succeeded proves the session signed in; the spawn claim then refuses when the server is later unreachable
   if (outcome.ok) dashboardAnswered = true
   return outcome
 }
 
-// A 50arms_api answer over the MCP's 100,000-character limit comes as `reply_file` with no body: its body is read from that file, so every reader of an answer reads the whole of it. A file that cannot
-// be read is a failure that names it, never an answer with no body.
-async function wholeAnswer($: any, outcome: Api): Promise<Api> {
-  if (outcome.replyFile === undefined) return outcome
+// A 50arms_api answer comes as `reply_file` with no body when the call asked for a file (`reply_to_file`) or the answer was over the MCP's 40,000-character inline limit: its body is read from that file and checked against
+// the file's sha256 the answer names, so every reader of an answer reads the whole of it and exactly what the MCP wrote. A file that cannot be read, or whose hash differs, is a failure that names it, never an answer with no body.
+// A call that asked for a file and got a body inline (a dashboard answer with status; status 0 is the MCP's own failure text) is a failure too: the plugin never takes a bundle from a tool result, which Claude Code refuses above its size limit.
+async function wholeAnswer($: any, outcome: Api, askedForFile: boolean): Promise<Api> {
+  if (outcome.replyFile === undefined) {
+    if (!askedForFile || outcome.status === 0) return outcome
+    return { ok: false, status: outcome.status, body: { error: 'the answer carried its body inline although the call asked for a reply file' } }
+  }
   const failed = (why: string): Api => ({ ok: false, status: outcome.status, body: { error: `the answer's reply file ${outcome.replyFile} could not be read (${why})` } })
+  if (outcome.replySha256 === undefined) return failed('the answer names no sha256')
   let text: string | null
   try {
     text = await $.fs.read(outcome.replyFile)
@@ -441,11 +446,23 @@ async function wholeAnswer($: any, outcome: Api): Promise<Api> {
     return failed(errMessage(err))
   }
   if (typeof text !== 'string') return failed('no such file')
+  let sha: string
+  try {
+    sha = await sha256Hex(text)
+  } catch (err: any) {
+    return failed(`its sha256 could not be computed: ${errMessage(err)}`)
+  }
+  if (sha !== outcome.replySha256) return failed(`its sha256 ${sha} is not the ${outcome.replySha256} the answer names`)
   try {
     return { ok: outcome.ok, status: outcome.status, body: JSON.parse(text) }
   } catch {
     return failed('not JSON')
   }
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 // what a thrown call to the plugin's server means, never in the engine's raw words
@@ -3166,7 +3183,7 @@ async function onAckCall($: any, e: any, next: any) {
   // MCP's size limit, so only here is an answer sent as a file read whole; nothing else this hook reads needs the body
   let named: string | null = null
   if (answer.ok && isPickup(e)) {
-    const connected = (await wholeAnswer($, answer)).body
+    const connected = (await wholeAnswer($, answer, false)).body
     if (connected?.connectedByPickup === true) {
       await reportActivityOnConnect($)
       if (!raisedByPlugin(next.origin)) named = await applyNaming($, CARD_TRANSITION_PATH.exec(e.path)?.[1], connected.naming)
@@ -5051,6 +5068,8 @@ async function agentCompactionVerdict($: any, e: any): Promise<AgentVerdict> {
 // reports what it delivered, and keeps only the floor (hooks/bundle/floor.ts). An agent context (the main conversation, or a sub-agent by its id) with no current bundle is held.
 
 const BUNDLE_WAIT_MS = 4_000
+// the event told when a compaction restarts the session: the one that is followed by the requested endpoints
+const COMPACTION_EVENT = 'session.after_compaction'
 
 // One hook call has ONE deadline (`deadlineAt`, CONTEXT_DEADLINE_MS from its start) for everything it waits on: the bundle fetch and a session start's own reads both end by it, so a hung dashboard never holds a hook past it.
 // A hook waits for the bundle fetch at most once, however many events it tells: the first call that finds no current bundle waits for the fetch in flight, and a later call of the same hook is answered
@@ -5172,7 +5191,8 @@ async function runFetch($: any): Promise<FetchOutcome> {
     return fetchFailure($, { status: 0, body: { message: `the plugin version could not be read: ${errMessage(err)}` } })
   }
   const before = (await read($, behavior)).held
-  const r = await api($, 'GET', BUNDLE_PATH, { query: bundleQuery(version, before === null ? null : before.bundle.version) })
+  // the bundle comes only as a file (`reply_to_file`), never as a tool result: it is larger than Claude Code takes as one
+  const r = await api($, 'GET', BUNDLE_PATH, { query: bundleQuery(version, before === null ? null : before.bundle.version), reply_to_file: true })
   if (!r.ok) {
     // no key, or the agent gate: the session's own tools tell the model, and nothing here holds it
     if (isSignedOut(r) || agentBlockOf(r) !== null) {
@@ -5448,23 +5468,44 @@ async function slotsOf($: any, event: string, names: string[], extra: Record<str
   return slots
 }
 
-// The carrier of a text over its mechanism's cap: the full text goes to a file and the bundle's pointer names it
-async function carrierFile($: any, d: Delivery): Promise<string> {
+// The carrier of an entry over its mechanism's cap: the full text goes to ONE file and the bundle's pointer names it. The file is complete when this returns and the pointer is told only after, so a reader never meets half of it.
+async function carrierFile($: any, event: string, entry: Entry): Promise<string> {
   const home = await homeDir($)
   if (home === null) throw new Error('no home directory')
-  const path = `${home}/.config/danxbot/behavior-text/${String(await $.session.id())}-${d.event.replace(/[^a-z0-9_.-]/g, '_')}-${await $.clock.now()}.txt`
-  await $.fs.write(path, d.text)
+  const name = `${String(await $.session.id())}-${event}-${entry.mechanism}-${await $.clock.now()}`.replace(/[^a-zA-Z0-9_.-]/g, '_')
+  const path = `${home}/.config/danxbot/behavior-text/${name}.txt`
+  await $.fs.write(path, entry.text)
   return path
 }
 
-async function renderDelivery($: any, d: Delivery): Promise<string> {
-  if (d.overCap === null) return d.text
-  try {
-    return deliveredText(d, await carrierFile($, d))
-  } catch (err: any) {
-    // a full text that could not be saved is said with the reason, never cut or dropped
-    return `⚠ 50 Arms: a text of the "${d.event}" event (${d.overCap.fullChars} characters) is over what this channel carries and could not be saved to a file (${errMessage(err).slice(0, CALL_ERROR_MAX)}). Tell the person.`
+// What a hook tells, one entry per mechanism (`entriesOf`): the text itself, or, over the mechanism's cap, the pointer to the file holding it. A text whose file cannot be written was not delivered: the context is held (the caller's catch), never told a warning in its place.
+async function renderEntries($: any, bundle: Bundle, event: string, deliveries: readonly Delivery[]): Promise<string[]> {
+  const rendered: string[] = []
+  for (const entry of entriesOf(bundle, deliveries)) {
+    if (entry.overCap === null) {
+      rendered.push(entry.text)
+      continue
+    }
+    try {
+      rendered.push(deliveredText(entry, await carrierFile($, event, entry)))
+    } catch (err: any) {
+      throw new BundleShapeError(`bad_response: a text of the "${event}" event (${entry.overCap.fullChars} characters) is over what ${entry.mechanism} carries and could not be saved to a file (${errMessage(err).slice(0, CALL_ERROR_MAX)})`)
+    }
   }
+  return rendered
+}
+
+// The session's requested endpoints, fetched when a compaction is told (`GET /api/behavior-events/requested-endpoints`, built by 50 Arms at that moment, never part of the bundle) and, like the bundle, only as a file. None read: `[]`.
+// A fetch that fails or ends past the hook's deadline is a text that cannot be delivered: it throws, and the caller holds the context.
+async function requestedEndpoints($: any, budget: Budget): Promise<BundleComputed[]> {
+  const version = await pluginVersion($)
+  const source = await boundedBy($, budget.deadlineAt, briefingSource<BundleComputed | null>(async () => {
+    const r = await api($, 'GET', REQUESTED_ENDPOINTS_PATH, { query: requestedEndpointsQuery(version), reply_to_file: true })
+    if (!r.ok) throw new Error(errText(r))
+    return readRequestedEndpointsBody(r.body)
+  }))
+  if (!source.ok) throw new BundleShapeError(`bad_response: the requested endpoints could not be fetched (${source.reason.slice(0, CALL_ERROR_MAX)})`)
+  return source.value === null ? [] : [source.value]
 }
 
 // The one way an event is told. The main conversation or a sub-agent (by its id) is held when no current bundle can be had: the answer is then the line that refuses (`owes`: a start event, owed and told once a bundle arrives).
@@ -5488,31 +5529,48 @@ async function tellEvent($: any, event: string, agentId: unknown, budget: Budget
   const events = [...owed.map(o => ({ event: o, matchers: {} as Record<string, string>, mechanisms: null as readonly string[] | null })), ...(taking === 'only' ? [] : [{ event, matchers: moment.matchers ?? {}, mechanisms: moment.mechanisms ?? null }])]
   // a compaction or a clear of the main conversation starts it again: its role is told again (AC 76950)
   if (key === mainContext && events.some(m => startsNewContext(m.event))) await update($, behavior, cur => ({ ...cur, roleTold: null }))
-  const rendered: string[] = []
+  // what this call decided, so a call that delivers nothing (the lookup was given up, or a text could not be delivered) puts back what it counted told: the owed event is then told in full when the context is released
+  let toldBefore: Told | null = null
+  let toldAfter: Told = {}
+  const rewind = async (): Promise<void> => {
+    if (toldBefore === null) return
+    const [before, after] = [toldBefore, toldAfter]
+    await update($, behavior, cur => ({ ...cur, told: { ...cur.told, [key]: rewindTold(cur.told[key] ?? {}, before, after) } }))
+  }
+  const made: { d: Delivery; at: number }[] = []
+  let rendered: string[]
   try {
     for (const m of events) {
       const slots = await slotsOf($, m.event, namedSlots(bundle, m.event), m.event === event ? moment.extra ?? {} : {}, budget.deadlineAt)
       // the slot reads may have ended after the lookup was given up (a start's deadline): nothing is then counted told or reported, and the start stays owed
-      if (moment.abandoned !== undefined && (await moment.abandoned())) return { kind: 'abandoned' }
+      if (moment.abandoned !== undefined && (await moment.abandoned())) {
+        await rewind()
+        return { kind: 'abandoned' }
+      }
+      // a compaction is followed by the session's requested endpoints, which only 50 Arms can build at this moment
+      const fetched = m.event === COMPACTION_EVENT ? await requestedEndpoints($, budget) : []
       let decision!: Decision
       await update($, behavior, cur => {
-        decision = decide(bundle, { event: m.event, matchers: m.matchers, slots, card, mechanisms: m.mechanisms }, cur.told[key] ?? {})
+        if (toldBefore === null) toldBefore = cur.told[key] ?? {}
+        decision = decide(bundle, { event: m.event, matchers: m.matchers, slots, card, mechanisms: m.mechanisms }, cur.told[key] ?? {}, fetched)
+        toldAfter = decision.told
         return { ...cur, told: { ...cur.told, [key]: decision.told } }
       })
       const at = await $.clock.now()
-      for (const d of decision.deliveries) {
-        rendered.push(await renderDelivery($, d))
-        await update($, behavior, cur => ({ ...cur, queue: enqueueDelivery(cur.queue, deliveryItem(bundle.version, d, new Date(at).toISOString()), key, at) }))
-      }
+      for (const d of decision.deliveries) made.push({ d, at })
     }
+    rendered = await renderEntries($, bundle, event, made.map(x => x.d))
   } catch (err: any) {
     if (!(err instanceof BundleShapeError)) throw err
-    // a bundle that cannot be evaluated is no bundle: the context is held, as for a fetch that failed, and every start event this call took or told is owed again
+    await rewind()
+    // a text that cannot be delivered (a bundle that cannot be evaluated, requested endpoints that could not be fetched, a file that could not be written) is no text: the context is held, as for a fetch that failed, and every start event this call took or told is owed again
     const held = await holdContext($, key, event, { reason: 'fetch_failed', detail: err.message.slice(0, CALL_ERROR_MAX), values: {} })
     const owedAgain = moment.owes === true ? [...owed, event] : owed
     await update($, behavior, cur => ({ ...cur, owed: owedAgain.reduce((acc, o) => owe(acc, key, o), cur.owed) }))
     return { kind: 'refused', text: refusalOf(held.hold, await $.clock.now()) }
   }
+  // reported only once the entries are delivered: a delivery whose file could not be written was never made
+  for (const { d, at } of made) await update($, behavior, cur => ({ ...cur, queue: enqueueDelivery(cur.queue, deliveryItem(bundle.version, d, new Date(at).toISOString()), key, at) }))
   if (rendered.length > 0) detach($, 'Reporting what the plugin delivered', flushReports($))
   return { kind: 'texts', entries: rendered }
 }

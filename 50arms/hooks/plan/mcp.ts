@@ -30,9 +30,9 @@ export function connectedPlanOf(outcome: ToolOutcome): { id: number; name: strin
 // where a server refusal is `ok: false` and is NEVER an error result. Only a thrown call is an error:
 // argument validation, an outdated MCP, a 5xx. So an `isError` result carries plain text, and anything
 // that is not an envelope is a failure here, never a success.
-// `replyFile`: the MCP sent 50arms_api's answer as a file (over its 100,000-character limit: `{ok, status, reply_file: {path, ...}}` and no `body`); `body` is then undefined until a reader reads that file.
+// `replyFile` and `replySha256`: the MCP sent 50arms_api's answer as a file (the call asked for one with `reply_to_file`, or the answer was over the MCP's 40,000-character inline limit: `{ok, status, reply_file: {path, sha256, ...}}` and no `body`); `body` is then undefined until a reader reads that file and checks it against the sha256.
 // `appVersion`: the dashboard's app version, which the MCP copies from the `X-50Arms-Version` response header into the envelope's `app_version`; absent when the answer has none or a value that is no `major.minor.patch`.
-export type ToolOutcome = { ok: boolean; status: number; body: any; replyFile?: string; appVersion?: string }
+export type ToolOutcome = { ok: boolean; status: number; body: any; replyFile?: string; replySha256?: string; appVersion?: string }
 
 // An MCP tool result's envelope: api() and the band's session_connect calls use it.
 export function toolOutcome(r: any): ToolOutcome {
@@ -67,7 +67,10 @@ export function textOutcome(text: string, isError: boolean): ToolOutcome {
   const status = typeof parsed.status === 'number' ? parsed.status : 0
   const appVersion = validAppVersion(parsed.app_version)
   const version = appVersion === undefined ? {} : { appVersion }
-  if (parsed.body === undefined && typeof parsed.reply_file?.path === 'string') return { ok: parsed.ok, status, body: undefined, replyFile: parsed.reply_file.path, ...version }
+  if (parsed.body === undefined && typeof parsed.reply_file?.path === 'string') {
+    const sha = typeof parsed.reply_file.sha256 === 'string' ? { replySha256: parsed.reply_file.sha256 } : {}
+    return { ok: parsed.ok, status, body: undefined, replyFile: parsed.reply_file.path, ...sha, ...version }
+  }
   return { ok: parsed.ok, status, body: parsed.body, ...version }
 }
 

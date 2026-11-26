@@ -80,11 +80,11 @@ export const PLUGIN_VERSION = '0.17.170'
 export const bundleFileText = (sessionId: string, version: string) => JSON.stringify({ v: 1, sessionId, version })
 export const BUNDLE_FILE_PATH = (sessionId: string) => `${HOME_DIR}/.config/danxbot/behavior-bundle/${sessionId}.json`
 /** One bundle event with one attachment per text: `texts` are the sections, by mechanism (`plugin.context` unless named). */
-export const bundleEvent = (event: string, texts: string[], extra: { mechanism?: string; frequency?: string; matcher?: Record<string, string> | null; id?: number; slots?: string[]; hookSlots?: string[]; computed?: unknown[] } = {}) => ({
+export const bundleEvent = (event: string, texts: string[], extra: { mechanism?: string; frequency?: string; matcher?: Record<string, string> | null; id?: number; slots?: string[]; hookSlots?: string[]; computed?: unknown[]; cap?: number; pointer?: string } = {}) => ({
   event,
   matchers: ['tool_name', 'tool_command', 'tool_path'],
   hook_slots: extra.hookSlots ?? [],
-  mechanisms: [{ mechanism: extra.mechanism ?? 'plugin.context', cap: null, over_cap_pointer: null }],
+  mechanisms: [{ mechanism: extra.mechanism ?? 'plugin.context', cap: extra.cap ?? null, over_cap_pointer: extra.cap === undefined ? null : extra.pointer ?? 'It is {{slot:chars}} characters: read {{slot:carrier_file}}.' }],
   attachments: texts.map((text, i) => ({
     attachment_id: (extra.id ?? 1000) + i,
     mechanism: extra.mechanism ?? 'plugin.context',
@@ -94,6 +94,86 @@ export const bundleEvent = (event: string, texts: string[], extra: { mechanism?:
   })),
   computed: extra.computed ?? [],
 })
+
+/**
+ * The wire shape of a bundle (DX-8225): each section and each mechanism listed once, an event naming its mechanisms by key and an attachment its sections by id. A test describes an event with `bundleEvent` (its sections inline);
+ * this lists them once. Sections that are the same text with the same rules share one id, as the hosted bundle's do.
+ */
+export function assembleBundle(events: ReturnType<typeof bundleEvent>[]) {
+  const sections: Record<string, unknown> = {}
+  const ids = new Map<string, string>()
+  const mechanisms: { mechanism: string; cap: number | null; over_cap_pointer: string | null }[] = []
+  const wire = events.map(event => {
+    // a mechanism has one cap in a bundle: the event a test gives a cap wins over the kit's uncapped default
+    for (const m of event.mechanisms) {
+      const listed = mechanisms.findIndex(x => x.mechanism === m.mechanism)
+      if (listed === -1) mechanisms.push(m)
+      else if (m.cap !== null) mechanisms[listed] = m
+    }
+    return {
+      event: event.event,
+      matchers: event.matchers,
+      hook_slots: event.hook_slots,
+      mechanism_keys: [...new Set([...event.attachments.map(a => a.mechanism), ...event.mechanisms.map(m => m.mechanism), ...(event.computed as { mechanism: string }[]).map(c => c.mechanism)])],
+      attachments: event.attachments.map(a => ({
+        attachment_id: a.attachment_id,
+        mechanism: a.mechanism,
+        frequency: a.frequency,
+        matcher: a.matcher,
+        section_ids: a.sections.map(section => {
+          const key = JSON.stringify(section)
+          if (!ids.has(key)) {
+            ids.set(key, ids.size.toString(16).padStart(16, '0'))
+            sections[ids.get(key) as string] = section
+          }
+          return ids.get(key) as string
+        }),
+      })),
+      computed: event.computed,
+    }
+  })
+  return { sections, mechanisms, events: wire }
+}
+
+/** SHA-256 of a text's UTF-8 bytes, as lowercase hex: the kit's own, so the check the plugin makes of a reply file is not made with the plugin's own code (a kit file may import nothing else). */
+export function sha256Hex(textValue: string): string {
+  const K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa,
+    0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ]
+  const bytes = [...new TextEncoder().encode(textValue)]
+  const bitLength = bytes.length * 8
+  bytes.push(0x80)
+  while (bytes.length % 64 !== 56) bytes.push(0)
+  for (let shift = 56; shift >= 0; shift -= 8) bytes.push(Math.floor(bitLength / 2 ** shift) & 0xff)
+  const h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
+  const rotr = (x: number, n: number) => (x >>> n) | (x << (32 - n))
+  const w = new Array<number>(64)
+  for (let offset = 0; offset < bytes.length; offset += 64) {
+    for (let i = 0; i < 16; i++) w[i] = ((bytes[offset + 4 * i] as number) << 24) | ((bytes[offset + 4 * i + 1] as number) << 16) | ((bytes[offset + 4 * i + 2] as number) << 8) | (bytes[offset + 4 * i + 3] as number)
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(w[i - 15] as number, 7) ^ rotr(w[i - 15] as number, 18) ^ ((w[i - 15] as number) >>> 3)
+      const s1 = rotr(w[i - 2] as number, 17) ^ rotr(w[i - 2] as number, 19) ^ ((w[i - 2] as number) >>> 10)
+      w[i] = ((w[i - 16] as number) + s0 + (w[i - 7] as number) + s1) | 0
+    }
+    let [a, b, c, d, e, f, g, hh] = h as [number, number, number, number, number, number, number, number]
+    for (let i = 0; i < 64; i++) {
+      const t1 = (hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + (K[i] as number) + (w[i] as number)) | 0
+      const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0
+      hh = g
+      g = f
+      f = e
+      e = (d + t1) | 0
+      d = c
+      c = b
+      b = a
+      a = (t1 + t2) | 0
+    }
+    ;[a, b, c, d, e, f, g, hh].forEach((v, i) => void (h[i] = ((h[i] as number) + v) | 0))
+  }
+  return h.map(v => (v >>> 0).toString(16).padStart(8, '0')).join('')
+}
 
 /** The bundle event a test sets (`world.bundle.events['session.after_clear']`) so a clear is followed by the cleared briefing: a plain /clear tells nothing in the kit's default bundle. */
 export const clearedEvent = () => bundleEvent('session.after_clear', [EVENT_TEXT('after_clear'), CLEARED_TEMPLATE], { id: 1200, slots: BRIEFING_SLOTS })
@@ -394,7 +474,7 @@ export function dashboard(
     clearAgreed: false,
     // CP-55: the release 50 Arms stands behind (`ready_loop.release_id`); the answers name it only while the job has ended
     releaseId: null as string | null,
-    // DX-4400: the 50arms_api paths whose answer the MCP sends as `reply_file` (over its 100,000-character limit), with the body written whole to a local file
+    // DX-4400: the 50arms_api paths whose answer the MCP sends as `reply_file`, with the body written whole to a local file (a call that asks for one, `reply_to_file`, gets it whatever its path; an answer over the MCP's 40,000-character inline limit comes as one too)
     replyFilePaths: [] as string[],
     // the reply file is gone before the plugin reads it (a cleaned temp folder, say)
     replyFileLost: false,
@@ -470,6 +550,16 @@ export function dashboard(
     // CP-146: what the plugin read and sent: each bundle read's query, each POST /api/plan-sessions/me/behavior-events body (`{reports: [...]}`), each PUT /api/plan-sessions/me/plugin-floor body
     bundleReads: [] as { plugin_version?: string; known_version?: string }[],
     deliveryReports: [] as { body: any }[],
+    // DX-8225: what the requested-endpoints read answers as its `computed` (null: the session read no spec), each read's query and whether it asked for a file, and a whole-answer override
+    requestedEndpoints: null as unknown,
+    requestedEndpointReads: [] as { plugin_version?: string; reply_to_file?: boolean }[],
+    requestedEndpointsOverride: undefined as undefined | { status: number; body?: unknown },
+    // DX-8226: the stand-in MCP answers a `reply_to_file` call inline instead of with the file form (a broken MCP), or names a sha256 that is not the file's
+    inlineReplies: false,
+    // the paths the stand-in MCP answered with the file form, in order; and whether the machine refuses the plugin's write of an over-cap text's carrier file
+    repliedAsFile: [] as string[],
+    carrierWriteFails: false,
+    replySha256: undefined as string | undefined,
     floorSends: [] as { body: any }[],
     // DX-4234: what the server's `restart_notice` tool answers (DX-4632): `{notice: null}` unless a test sets a JSON answer (`json`), a raw
     // result (`raw`), or a rejection (`deny`). `delayMs` / `hangs`: it answers late / never.
@@ -916,7 +1006,27 @@ export function dashboard(
     // the time stamp is the `clock_time` slot of a prompt's text (CP-146): the stand-in's `prompt.submit` text is the slot alone, as the plugin used to hand it
     const prompt = bundleEvent('prompt.submit', ['{{slot:clock_time}}'], { id: 900, slots: ['clock_time'], hookSlots: ['clock_time'] })
     const events = [...[...named, prompt].filter(e => !(e.event in world.bundle.events)), ...Object.values(world.bundle.events)]
-    return reply({ version: world.bundle.version, min_plugin_version: world.bundle.minPlugin, floor_lines_plugin_version: world.bundle.floorVersion, events })
+    return reply({ version: world.bundle.version, min_plugin_version: world.bundle.minPlugin, floor_lines_plugin_version: world.bundle.floorVersion, ...assembleBundle(events) })
+  }
+  const isRequestedEndpointsRead = (a: any) => a.method === 'GET' && a.path === '/api/behavior-events/requested-endpoints'
+  function requestedEndpointsAnswer(a: any) {
+    const query = a.query ?? {}
+    world.requestedEndpointReads.push({ plugin_version: query.plugin_version, reply_to_file: a.reply_to_file })
+    if (world.requestedEndpointsOverride !== undefined) return reply(world.requestedEndpointsOverride.body ?? { error: 'requested endpoints boom' }, world.requestedEndpointsOverride.status)
+    return reply({ computed: world.requestedEndpoints })
+  }
+  // DX-8226: the stand-in MCP's answer to a call that asked for a reply file (`reply_to_file`) or whose path a test lists in `replyFilePaths`: `{ok, status, reply_file: {path, bytes, chars, sha256}}` and no body, the body written whole to the file named from its hash.
+  // Any other result is held to the host's size limit, as Claude Code holds a tool result.
+  function replied(args: any, answered: { content: { text: string }[]; isError: boolean }) {
+    const asked = args.reply_to_file === true && !world.inlineReplies
+    if (!asked && !world.replyFilePaths.includes(args.path)) return hostLimited(answered)
+    world.repliedAsFile.push(args.path)
+    const whole = JSON.parse(answered.content[0].text)
+    const body = JSON.stringify(whole.body)
+    const sha256 = sha256Hex(body)
+    const file = `${HOME_DIR}/tmp/danx-api/${sha256.slice(0, 16)}.json`
+    if (!world.replyFileLost) world.files[file] = body
+    return text({ ok: whole.ok, status: whole.status, reply_file: { path: file, bytes: new TextEncoder().encode(body).length, chars: body.length, sha256: world.replySha256 ?? sha256, instruction: 'The reply was over the inline limit, so its body is this file, whole.' } })
   }
   // ... every attempt, including the ones the MCP being down refuses
   const pacingAttempts = { n: 0 }
@@ -1004,7 +1114,7 @@ export function dashboard(
       else if (e.args.method === 'DELETE' && e.args.path === '/api/plan-sessions/me/agent') releaseCalls.push({ method: e.args.method, path: e.args.path, background: e.args.background })
       else calls.push({ server: e.server, tool: e.tool, args: e.args })
       // the dashboard's own refusal for a session whose agent was released: a 403 envelope, not the MCP's error result
-      if (world.agentGate === 'agent_not_held') return { value: reply({ error: 'agent_not_held', state: 'agent_not_held', instruction: 'You hold no team agent: call session_connect to claim one.' }, 403) }
+      if (world.agentGate === 'agent_not_held') return { value: replied(e.args, reply({ error: 'agent_not_held', state: 'agent_not_held', instruction: 'You hold no team agent: call session_connect to claim one.' }, 403)) }
       return { value: { content: [{ type: 'text', text: JSON.stringify(AGENT_GATE_HALT(world.agentGate)) }], isError: true } }
     }
     // DX-5593: the spawn claim, decided like 50 Arms does under its lock: refuse when the level is not on pace or the live count (the line's
@@ -1074,7 +1184,14 @@ export function dashboard(
       if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
       if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
-      return { value: contextAnswer(e.args) }
+      return { value: replied(e.args, contextAnswer(e.args)) }
+    }
+    // DX-8225: the requested endpoints a compaction is followed by, read only then: kept out of `calls` and of the context reads
+    if (e.server === SERVER && e.tool === '50arms_api' && isRequestedEndpointsRead(e.args)) {
+      if (notConnected()) return { deny: '$.mcp.call: no connected MCP tool "50arms_api" on a server named "plugin:50arms:platform"' }
+      if (options.mcp === 'flaky') return { deny: 'request timed out after 60000ms' }
+      if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
+      return { value: replied(e.args, requestedEndpointsAnswer(e.args)) }
     }
     // CP-146: the plugin's reports of what it delivered and held (POST behavior-events) and its floor lines (PUT plugin-floor), kept in their own lists; a `reportReplies` entry for the route answers an error or a delay
     if (e.server === SERVER && e.tool === '50arms_api' && ((e.args.method === 'POST' && e.args.path === '/api/plan-sessions/me/behavior-events') || (e.args.method === 'PUT' && e.args.path === '/api/plan-sessions/me/plugin-floor'))) {
@@ -1347,16 +1464,8 @@ export function dashboard(
         if (isIssueRead) issueReads.active--
       }
       const answered = route(e.args.method, e.args.path, e.args.body, e.args.query)
-      // DX-4400: an answer the MCP sends as a file: `{ok, status, reply_file}` and no body, the body written whole where the file names
-      if (world.replyFilePaths.includes(e.args.path)) {
-        const whole = JSON.parse(answered.content[0].text)
-        const body = JSON.stringify(whole.body)
-        // named by its content, as the MCP names it: the same body is the same file
-        const file = `${HOME_DIR}/tmp/danx-api/${[...body].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(16)}.json`
-        if (!world.replyFileLost) world.files[file] = body
-        return { value: text({ ok: whole.ok, status: whole.status, reply_file: { path: file, bytes: body.length, chars: body.length, instruction: 'The reply was over the inline limit, so its body is this file, whole.' } }) }
-      }
-      return { value: hostLimited(answered) }
+      // DX-4400, DX-8226: an answer the MCP sends as a file (asked for, or listed in `replyFilePaths`), any other held to the host's limit
+      return { value: replied(e.args, answered) }
     }
     return { deny: `no stand-in for ${e.server}` }
   })
@@ -1498,6 +1607,7 @@ export function dashboard(
   })
   // a file the plugin writes lands in `world.files`
   on('fs.write', (_$: any, e: any) => {
+    if (world.carrierWriteFails && fsKey(e.path).includes('/behavior-text/')) return { deny: 'EACCES: permission denied' } as any
     world.files[fsKey(e.path)] = e.text
     return { value: undefined } as any
   })

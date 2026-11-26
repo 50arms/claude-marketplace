@@ -5,7 +5,7 @@ import { describe, expect } from 'claude-code/testing'
 
 import { afterCompaction, nextSince, turnActivityBody } from '../hooks/reports/turn-activity'
 import { toolName } from '../hooks/plan/config'
-import { HOME_DIR, SURFACES, answerPlanConnect, dashboard, planNumberOf, startSession, test } from './plan-kit'
+import { HOME_DIR, SURFACES, answerPlanConnect, dashboard, planNumberOf, sha256Hex, startSession, test } from './plan-kit'
 
 const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
@@ -39,7 +39,8 @@ function answerPickup(on: any, d: any) {
   const answered = (body: object) => {
     if (d.world.replyAsFile !== true) return { result: {}, text: JSON.stringify({ ok: true, status: 200, body }), isError: false } as any
     d.world.files[REPLY_FILE] = JSON.stringify(body)
-    return { result: {}, text: JSON.stringify({ ok: true, status: 200, reply_file: { path: REPLY_FILE, bytes: 1, chars: 1, instruction: 'The reply is this file.' } }), isError: false } as any
+    // the MCP names the sha256 of every reply file it writes (DX-8226)
+    return { result: {}, text: JSON.stringify({ ok: true, status: 200, reply_file: { path: REPLY_FILE, bytes: 1, chars: 1, sha256: sha256Hex(JSON.stringify(body)), instruction: 'The reply is this file.' } }), isError: false } as any
   }
   on('tool.call', { tool: toolName('50arms_api') }, (_$: any, e: any) => {
     if (d.world.pickupRefused) return { result: {}, text: JSON.stringify({ ok: false, status: 409, error: 'card_held' }), isError: true } as any
