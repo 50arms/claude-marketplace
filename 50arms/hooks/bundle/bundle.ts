@@ -10,7 +10,7 @@ export type { Bundle, BundleAttachment, BundleComputed, BundleEvent, BundleMecha
 
 // every frequency this plugin knows, keyed by the contract's `Frequency` union (types/index.d.ts): a member of the union missing here is a type error, so the list can never drift from it
 const KNOWN_FREQUENCIES: Record<Frequency, true> = { every: true, once_per_session: true, once_per_card_per_session: true }
-const isFrequency = (v: unknown): v is Frequency => typeof v === 'string' && Object.hasOwn(KNOWN_FREQUENCIES, v)
+const isFrequency = (v: unknown): v is Frequency => typeof v === 'string' && Object.prototype.hasOwnProperty.call(KNOWN_FREQUENCIES, v)
 
 // What a bundle read answered: the bundle, or `{unchanged: true}` for the `known_version` the call sent.
 export type BundleRead = { kind: 'bundle'; bundle: Bundle } | { kind: 'unchanged'; version: string; floorLinesPluginVersion: string | null }

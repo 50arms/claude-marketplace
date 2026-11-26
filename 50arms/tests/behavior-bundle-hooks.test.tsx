@@ -7,7 +7,7 @@ import { floorLines } from '../hooks/bundle/floor'
 import { RETRY_WINDOW_MS } from '../hooks/bundle/hold'
 import { RETRY_DELAYS_MS } from '../hooks/bundle/reports'
 import { CONTEXT_DEADLINE_MS } from '../hooks/context/events'
-import { test, BUNDLE_FILE_PATH, EVENT_TEXT, NEXT_BUNDLE_VERSION, PLUGIN_VERSION, SURFACES, bundleEvent, bundleFileText, dashboard, deliveredReports, firstPrompt, startSession } from './plan-kit'
+import { test, BUNDLE_FILE_PATH, relayPhase, EVENT_TEXT, NEXT_BUNDLE_VERSION, PLUGIN_VERSION, SURFACES, bundleEvent, bundleFileText, dashboard, deliveredReports, firstPrompt, startSession } from './plan-kit'
 
 const MIN = 60_000
 const NEWER_THAN_ANSWER = `${'c'.repeat(63)}3`
@@ -289,8 +289,10 @@ for (const surface of SURFACES) {
       const r = await pending
       expect((r.context ?? []).join('\n')).toMatch(/loading/)
       expect((r.context ?? []).join('\n')).not.toContain(EVENT_TEXT('session_start'))
+      // the start is owed, not dropped: once the dashboard answers, the next prompt tells it
       d.world.contextDelayMs = 0
       await d.clock.advance(60 * MIN)
+      expect(((await $.prompt.submit({ text: 'again' })).context ?? []).join('\n')).toContain(EVENT_TEXT('session_start'))
     })
 
     const holdsWritten = (d: any) => d.stateWrites.filter((w: any) => w.key === 'behavior' && Object.keys(w.value?.holds ?? {}).length > 0)
@@ -303,9 +305,12 @@ for (const surface of SURFACES) {
       d.world.bundle.version = NEXT_BUNDLE_VERSION
       d.world.files[BUNDLE_FILE_PATH(d.world.sessionId)] = bundleFileText(d.world.sessionId, NEXT_BUNDLE_VERSION)
       d.world.signedOut = 'lapsed'
-      // the call's first event waits for the fetch (signed-out), and its later events (the tool's own) run in the same hook
+      // the relay streams, so the session file makes the held bundle stale: the call fetches (one wait, answered signed-out), and its later events (the tool's own) run in the same hook
+      expect(['streaming', 'held']).toContain(relayPhase(d))
+      const reads = d.contextReads.length
       expect((await tool($)).deny).toBeUndefined()
       await d.clock.settle()
+      expect(d.contextReads.length).toBeGreaterThan(reads)
       expect(holdsWritten(d)).toEqual([])
       expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
     })
@@ -316,10 +321,51 @@ for (const surface of SURFACES) {
       d.world.bundle.events['tool.after'] = bundleEvent('tool.after', ['After a tool.'], { id: 310 })
       await firstPrompt($, 'startup')
       d.world.files[BUNDLE_FILE_PATH(d.world.sessionId)] = bundleFileText(d.world.sessionId, NEWER_THAN_ANSWER)
+      expect(['streaming', 'held']).toContain(relayPhase(d))
+      const reads = d.world.bundleReads.length
       expect((await tool($)).deny).toBeUndefined()
       await d.clock.settle()
+      // the file makes the held bundle stale, so the call fetched; the answer is older than the file, and the hook still goes on with it
+      expect(d.world.bundleReads.length).toBeGreaterThan(reads)
       expect(holdsWritten(d)).toEqual([])
       expect(deliveredReports(d, 'tool.after')).toHaveLength(1)
+    })
+
+    const holdKeys = (d: any) => Object.keys((d.stateWrites.filter((w: any) => w.key === 'behavior').at(-1)?.value as any)?.holds ?? {})
+
+    // a hold placed while the answer was unknown (the dashboard was down at the start) is let go when a later fetch finds the session signed out: nothing was ever down, so nothing is reported
+    test('a signed-out answer releases a hold placed while the answer was unknown, with no hold report', async ($, on) => {
+      const d = await started($, on)
+      d.world.bundle.override = { status: 503, body: { error: 'dashboard_unreachable' } }
+      await firstPrompt($, 'startup')
+      expect(holdKeys(d)).toEqual(['main'])
+      d.world.bundle.override = undefined
+      d.world.signedOut = 'lapsed'
+      const reads = d.contextReads.length
+      expect((await tool($)).deny).toBeUndefined()
+      await d.clock.settle()
+      expect(d.contextReads.length).toBeGreaterThan(reads)
+      expect(holdKeys(d)).toEqual([])
+      expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
+    })
+
+    // the briefing slots of an after-compaction start read the dashboard: a read past the hook's deadline gives the start up before anything is counted told, so no delivery is reported that nobody saw
+    test('a start whose briefing slots read past the deadline is owed, with nothing told or reported for it, and the next prompt tells it once', async ($, on) => {
+      const d = await started($, on)
+      d.world.reportReplies['GET /api/plan-sessions/me/owed-comments'] = { delayMs: 60 * MIN }
+      const pending = firstPrompt($, 'compact')
+      await d.clock.advance(CONTEXT_DEADLINE_MS + 1_000)
+      await d.clock.settle()
+      const first = await pending
+      expect(first.context.join('\n')).toMatch(/loading/)
+      expect(first.context.join('\n')).not.toContain(EVENT_TEXT('after_compaction'))
+      await d.clock.settle()
+      expect(deliveredReports(d, 'session.after_compaction')).toEqual([])
+      delete d.world.reportReplies['GET /api/plan-sessions/me/owed-comments']
+      await d.clock.advance(60 * MIN)
+      expect(((await $.prompt.submit({ text: 'again' })).context ?? []).join('\n')).toContain(EVENT_TEXT('after_compaction'))
+      await d.clock.settle()
+      expect(deliveredReports(d, 'session.after_compaction')).toHaveLength(1)
     })
 
     describe('a held main conversation at a stop', () => {
@@ -338,6 +384,19 @@ for (const surface of SURFACES) {
         expect((await $.classic.Stop(STOP))?.block).toMatch(/DX-1/)
         const next = ((await $.prompt.submit({ text: 'again' })).context ?? []) as string[]
         expect(next.join('\n')).toContain(EVENT_TEXT('session_start'))
+      })
+
+      // a slot reads only the sources it names: a stop text with `agent_list` needs the engine's agent list, never the owed-comments read or `git status`
+      test('a stop text naming agent_list reads neither the owed comments nor git status', async ($, on) => {
+        const d = await started($, on)
+        d.world.bundle.events['turn.stop'] = bundleEvent('turn.stop', ['Agents running: {{slot:agent_list}}'], { id: 410, mechanism: 'plugin.stop_block', slots: ['agent_list'] })
+        await firstPrompt($, 'startup')
+        d.world.readyRows[7] = [READY_CARD]
+        const reads = d.reports.length
+        const runs = d.runCalls.length
+        expect((await $.classic.Stop(STOP))?.block).toContain('Agents running:')
+        expect(d.reports.slice(reads).filter((r: any) => r.path === '/api/plan-sessions/me/owed-comments')).toEqual([])
+        expect(d.runCalls.length).toBe(runs)
       })
     })
   })

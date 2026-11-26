@@ -3793,7 +3793,8 @@ async function sessionContext($: any, start: NonNullable<PendingStart>, budget: 
     if (expired || left <= 0) return null
     if (plan.kind === 'connected' || plan.kind === 'not-connected') {
       // the bundle's texts for this start; a session on no plan also asks the restart notice, if it replaced one that was on a plan
-      const outcome = await tellEvent($, event, null, budget, { owes: true, waitMs: left })
+      const outcome = await tellEvent($, event, null, budget, { owes: true, waitMs: left, abandoned: async () => expired || deadlineAt - (await $.clock.now()) <= 0 })
+      if (outcome.kind === 'abandoned') return null
       return { line: textsOrRefusal(outcome).join('\n') || null, askRestart: plan.kind === 'not-connected' && askRestart }
     }
     if (plan.kind === 'failed') return fault({ reason: 'fetch_failed', detail: `the session could not be read (${plan.reason.slice(0, CALL_ERROR_MAX)})`, values: {} })
@@ -4506,6 +4507,8 @@ async function onReportStop($: any, e: any, next: any) {
   if ((await reportingState($)) === 'off') return next(e)
   // a held main conversation is told it is held by the refusal of each tool call, and never also told to pick up cards
   if (e.agent_id === undefined && (await read($, behavior)).holds[mainContext] !== undefined) return next(e)
+  // the hook's one deadline starts here: the bundle's text for this stop and the slot reads it names end by it
+  const budget = await hookBudget($)
   const verdict: ReadyRead =
     e.agent_id === undefined && e.stop_hook_active !== true
       ? await withinDeadline($, READY_CARDS_DEADLINE_MS, readReadyCards($), () => ({ kind: 'failed', reason: `timeout: no answer within ${READY_CARDS_DEADLINE_MS / 1000} s` }))
@@ -4521,7 +4524,7 @@ async function onReportStop($: any, e: any, next: any) {
   // blocked (`stop_hook_active`), so no attached policy can keep a session from stopping
   if (e.agent_id !== undefined || e.stop_hook_active === true || !(await signedInWithAgent($))) return { ...r, block: own }
   // only the Stop block carries it: a text of another mechanism is never decided here, and a stop is no channel for the start texts a context is owed
-  const told = await tellEvent($, 'turn.stop', null, await hookBudget($), { extra: { next_step: own }, mechanisms: ['plugin.stop_block'] })
+  const told = await tellEvent($, 'turn.stop', null, budget, { extra: { next_step: own }, mechanisms: ['plugin.stop_block'] })
   // a context that turned out held at this stop is told so by its tool refusals, never by a pick-up-cards block
   if (told.kind === 'refused') return r
   return { ...r, block: [own, ...textsOf(told)].join('\n\n') }
@@ -5161,7 +5164,11 @@ async function runFetch($: any): Promise<FetchOutcome> {
   const r = await api($, 'GET', BUNDLE_PATH, { query: bundleQuery(version, before === null ? null : before.bundle.version) })
   if (!r.ok) {
     // no key, or the agent gate: the session's own tools tell the model, and nothing here holds it
-    if (isSignedOut(r) || agentBlockOf(r) !== null) return { kind: 'signed-out' }
+    if (isSignedOut(r) || agentBlockOf(r) !== null) {
+      // a session no key or the agent gate answers for holds nothing: a hold placed while the answer was unknown is let go, with no report (nothing was ever down)
+      await update($, behavior, cur => (Object.keys(cur.holds).length === 0 ? cur : { ...cur, holds: {} }))
+      return { kind: 'signed-out' }
+    }
     return fetchFailure($, { status: r.status, body: r.body, serverNotConnected: r.unreachable === true, classifierRefused: r.refusal !== undefined, keyRevoked: outcomeRevokedBy(r) !== null })
   }
   let answer: BundleRead
@@ -5379,14 +5386,16 @@ async function openHoldReport($: any, key: string, hold: Hold, now: number): Pro
 
 // ---- telling an event ----
 
-type EventOutcome = { kind: 'texts'; entries: string[] } | { kind: 'signed-out' } | { kind: 'refused'; text: string }
+type EventOutcome = { kind: 'texts'; entries: string[] } | { kind: 'signed-out' } | { kind: 'refused'; text: string } | { kind: 'abandoned' }
 
 // `owes`: a start event, owed and told once a bundle arrives. `owed`: what the call does with the owed start events (`settleOwed`): only a prompt (`with`) and the refusal of a tool call (`only`) tell them.
 // `mechanisms`: the mechanisms this hook can carry; a text of another is never decided, so it is neither counted told nor reported delivered.
-type MomentIn = { matchers?: Record<string, string>; extra?: Record<string, string>; owes?: boolean; waitMs?: number; owed?: OwedTaking; mechanisms?: readonly string[] }
+// `abandoned`: asked after the slots are filled, before anything is decided; true gives the event up with nothing counted told or reported.
+type MomentIn = { matchers?: Record<string, string>; extra?: Record<string, string>; owes?: boolean; waitMs?: number; owed?: OwedTaking; mechanisms?: readonly string[]; abandoned?: () => Promise<boolean> }
 
 // the slots the plugin owns, filled for the ones an event's texts name
-async function slotsOf($: any, event: string, names: string[], extra: Record<string, string>): Promise<Record<string, string>> {
+// Each source a slot needs is read only when a named slot needs it, and ends by `deadlineAt` (the hook's one deadline), a source cut off by it being a stated failure.
+async function slotsOf($: any, event: string, names: string[], extra: Record<string, string>, deadlineAt: number): Promise<Record<string, string>> {
   const slots: Record<string, string> = { ...extra }
   const has = (n: string) => names.includes(n) && slots[n] === undefined
   if (has('clock_time')) {
@@ -5397,15 +5406,15 @@ async function slotsOf($: any, event: string, names: string[], extra: Record<str
       slots.clock_time = nextStamp(now, -new Date(now).getTimezoneOffset(), null).line.replace(/ \+0$/, '')
     }
   }
-  const sources = names.some(n => ['owed_list', 'plan_id', 'plan_name', 'card_list', 'agent_list', 'git_status'].includes(n)) ? await briefingSources($) : null
-  if (sources !== null) {
-    if (has('owed_list')) slots.owed_list = owedListSlot(sources.owed)
-    if (has('plan_id')) slots.plan_id = planIdSlot(sources.plan)
-    if (has('plan_name')) slots.plan_name = planNameSlot(sources.plan)
-    if (has('card_list')) slots.card_list = cardListSlot(sources.cards)
-    if (has('agent_list')) slots.agent_list = agentListSlot(sources.agents)
-    if (has('git_status')) slots.git_status = gitStatusSlot(sources.git)
+  if (has('owed_list')) slots.owed_list = owedListSlot(await owedSource($, deadlineAt))
+  if (has('plan_id') || has('plan_name')) {
+    const plan = await briefingPlan($)
+    if (has('plan_id')) slots.plan_id = planIdSlot(plan)
+    if (has('plan_name')) slots.plan_name = planNameSlot(plan)
   }
+  if (has('card_list')) slots.card_list = cardListSlot(await cardsSource($))
+  if (has('agent_list')) slots.agent_list = agentListSlot(await agentsSource($, deadlineAt))
+  if (has('git_status')) slots.git_status = gitStatusSlot(await gitSource($, deadlineAt))
   if (has('disk_free')) {
     // the `disk_free` slot (a `tool.after` text's): the free bytes of the last measurement; a machine that has not opted in to the disk notice has none, and the slot is then named as unfilled
     const freeBytes = (await read($, diskMeasured))?.freeBytes ?? null
@@ -5461,7 +5470,9 @@ async function tellEvent($: any, event: string, agentId: unknown, budget: Budget
   const rendered: string[] = []
   try {
     for (const m of events) {
-      const slots = await slotsOf($, m.event, namedSlots(bundle, m.event), m.event === event ? moment.extra ?? {} : {})
+      const slots = await slotsOf($, m.event, namedSlots(bundle, m.event), m.event === event ? moment.extra ?? {} : {}, budget.deadlineAt)
+      // the slot reads may have ended after the lookup was given up (a start's deadline): nothing is then counted told or reported, and the start stays owed
+      if (moment.abandoned !== undefined && (await moment.abandoned())) return { kind: 'abandoned' }
       let decision!: Decision
       await update($, behavior, cur => {
         decision = decide(bundle, { event: m.event, matchers: m.matchers, slots, card, mechanisms: m.mechanisms }, cur.told[key] ?? {})
@@ -5506,10 +5517,14 @@ async function refuseWhileHeld($: any, agentId: unknown, budget: Budget): Promis
   return `${OWED_ARRIVED}\n\n${outcome.entries.join('\n\n')}`
 }
 
-// the sources of the live data a start after a compaction or a clear fills in
-async function briefingSources($: any): Promise<{ plan: { ref: string; name: string } | null; owed: Source<OwedComment[]>; cards: Source<BriefingCard[]>; agents: Source<BriefingAgent[]>; git: Source<GitState> }> {
+// the sources of the live data a start after a compaction or a clear fills in, one function each so a slot reads only what it names
+const briefingPlan = async ($: any): Promise<{ ref: string; name: string } | null> => {
   const v = await read($, view)
-  const owed = await briefingSource<OwedComment[]>(async () => {
+  return v.connected === null ? null : { ref: v.connected.ref, name: v.connected.name }
+}
+
+const owedSource = ($: any, deadlineAt: number): Promise<Source<OwedComment[]>> =>
+  briefingSource<OwedComment[]>($, deadlineAt, async () => {
     const r = await api($, 'GET', '/api/plan-sessions/me/owed-comments')
     if (!r.ok) throw new Error(errText(r))
     const list = r.body?.owedComments
@@ -5519,27 +5534,37 @@ async function briefingSources($: any): Promise<{ plan: { ref: string; name: str
     if (bad !== -1) throw new Error(`bad_response: owed-comments element ${bad} is not an owed comment`)
     return list
   })
-  const cards = await briefingSource<BriefingCard[]>(async () => v.inProgress.map(c => ({ id: c.id, title: c.title })))
-  const agents = await briefingSource<BriefingAgent[]>(async () => {
+
+const cardsSource = async ($: any): Promise<Source<BriefingCard[]>> => {
+  const v = await read($, view)
+  return { ok: true, value: v.inProgress.map(c => ({ id: c.id, title: c.title })) }
+}
+
+const agentsSource = ($: any, deadlineAt: number): Promise<Source<BriefingAgent[]>> =>
+  briefingSource<BriefingAgent[]>($, deadlineAt, async () => {
     const listed: { id: string; type: string; description: string; status: string }[] = await $.agent.list()
     return listed.filter(a => a.type !== 'teammate' && a.status === 'running').map(a => ({ id: a.id, type: a.type, description: a.description }))
   })
-  const git = await briefingSource<GitState>(async () => {
+
+const gitSource = ($: any, deadlineAt: number): Promise<Source<GitState>> =>
+  briefingSource<GitState>($, deadlineAt, async () => {
     const out = await $.process.run(['git', 'status', '--porcelain=v1', '-b'], { cwd: await $.session.cwd(), timeoutMs: GIT_STATUS_TIMEOUT_MS })
     if (out.exitCode !== 0) throw new Error(`git status exited ${out.exitCode}`)
     const state = parseGitStatus(out.stdout)
     if (state === null) throw new Error('git status printed nothing readable')
     return state
   })
-  return { plan: v.connected === null ? null : { ref: v.connected.ref, name: v.connected.name }, owed, cards, agents, git }
-}
 
-async function briefingSource<T>(readSource: () => Promise<T>): Promise<Source<T>> {
-  try {
-    return { ok: true, value: await readSource() }
-  } catch (err: any) {
-    return { ok: false, reason: errMessage(err) }
-  }
+// a source that has not answered by the hook's deadline is a stated failure, never a wait past it
+async function briefingSource<T>($: any, deadlineAt: number, readSource: () => Promise<T>): Promise<Source<T>> {
+  const answer = (async (): Promise<Source<T>> => {
+    try {
+      return { ok: true, value: await readSource() }
+    } catch (err: any) {
+      return { ok: false, reason: errMessage(err) }
+    }
+  })()
+  return withinDeadline<Source<T>>($, Math.max(deadlineAt - (await $.clock.now()), 0), answer, () => ({ ok: false, reason: 'timeout: no answer by the hook deadline' }))
 }
 
 // the plugin's `dashboard_url` option, as the engine passed it to register (the last resort of blockedOrigin)
