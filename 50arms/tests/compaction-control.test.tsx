@@ -2,14 +2,14 @@ import "./run-tests-with-npm-test.generated"
 // DX-4993 (PLAN-42 rule R-4): the plugin's half of an operator session's compaction handshake, as pure rules (hooks/compaction/*) and as the engine runs the
 // hooks: the agent's ready (a release in the control file the relay writes) makes the plugin run /compact itself at the next main-loop turn end, once; an automatic
 // proposal is refused while the session is under the handshake; a manual /compact and the safety valve always pass; nothing is armed for the main agent (DX-5231);
-// and a compaction in the middle of a turn carries the resume briefing on the next tool result. CP-146: the briefing's words are the bundle's; the plugin fills its slots (plan, cards, sub-agents, owed comments, git).
+// and a compaction in the middle of a turn carries the resume briefing on the next tool result.
 import { describe, expect } from 'claude-code/testing'
 
-import { agentListSlot, cardListSlot, gitStatusSlot, owedListSlot, parseGitStatus, planIdSlot, planNameSlot } from '../hooks/compaction/briefing'
+import { briefingText, parseGitStatus } from '../hooks/compaction/briefing'
 import { HELD_REASON, RELAY_OLDER_NOTICE, USED_RELEASE_KEEP, USED_RELEASE_PREFIX, parseControlFile, readyRelease, staleReleaseKeys, usedReleaseKey, verdict } from '../hooks/compaction/control'
 import { sessionFilePath } from '../hooks/relay/session-file'
 import type { AgentControl, ControlFile, GateControl, GateInput, ModelValves } from '../hooks/compaction/control'
-import { BAD_SESSION_ID, BAD_SESSION_ID_PATH, CLOCK_START, COMPACTED_MARK, EVENT_TEXT, CLEARED_SESSION_ID, HOME_DIR, OWN_SESSION, SESSION_ID, SURFACES, dashboard, startSession, test } from './plan-kit'
+import { BAD_SESSION_ID, BAD_SESSION_ID_PATH, CLOCK_START, EVENT_TEXT, CLEARED_SESSION_ID, HOME_DIR, OWN_SESSION, SESSION_ID, SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const CONTROL_FILE = `${HOME_DIR}/.config/danxbot/compaction/${OWN_SESSION.session_id}.json`
 const NOW = Date.parse('2026-10-14T12:00:00.000Z')
@@ -205,7 +205,7 @@ describe('spent releases in the store (pure)', () => {
 
 })
 
-describe('the resume briefing slots (pure)', () => {
+describe('the resume briefing (pure)', () => {
   test('parses git status: branch, changes, upstream and unpushed commits', () => {
     expect(parseGitStatus('## main...origin/main [ahead 2]\n M a.ts\n?? b.ts\n')).toEqual({ branch: 'main', changed: 2, upstream: 'origin/main', ahead: 2 })
     expect(parseGitStatus('## main...origin/main\n')).toEqual({ branch: 'main', changed: 0, upstream: 'origin/main', ahead: 0 })
@@ -220,50 +220,68 @@ describe('the resume briefing slots (pure)', () => {
   const ok = <T,>(value: T) => ({ ok: true as const, value })
   const GIT = { branch: 'card/x', changed: 3, upstream: 'origin/card/x', ahead: 2 }
 
-  test('the plan slots name the plan, or say there is none', () => {
-    expect(planIdSlot({ ref: 'PLAN-23' })).toBe('PLAN-23')
-    expect(planNameSlot({ name: 'The plugin' })).toBe('The plugin')
-    expect(planIdSlot(null)).toBe('none')
-    expect(planNameSlot(null)).toBe('no plan')
+  test('names the plan, the cards in flight, the running sub-agents and the work not pushed', () => {
+    const text = briefingText({
+      plan: { ref: 'PLAN-23', name: 'The plugin' },
+      owed: ok([]),
+      cards: ok([{ id: 'DX-9', title: 'In flight card' }]),
+      agents: ok([{ id: 'a1', type: '50arms:worker-sonnet-high', description: 'Build the thing' }]),
+      git: ok(GIT),
+    })
+    expect(text).toContain('[50 ARMS] Your conversation was just compacted.')
+    expect(text).toContain('Your plan is PLAN-23 The plugin.')
+    expect(text).toContain('Cards in flight on your plan: DX-9 In flight card.')
+    expect(text).toContain('Sub-agents still running (they carried on through the compaction): a1 (50arms:worker-sonnet-high) Build the thing.')
+    expect(text).toContain("Work not pushed, in the session's own checkout (branch card/x): 3 uncommitted paths, 2 unpushed commits.")
   })
 
-  test('the card and agent slots list what is there, and count the rest past eight', () => {
-    expect(cardListSlot(ok([{ id: 'DX-9', title: 'In flight card' }]))).toBe('DX-9 In flight card')
-    expect(agentListSlot(ok([{ id: 'a1', type: '50arms:worker-sonnet-high', description: 'Build the thing' }]))).toBe('a1 (50arms:worker-sonnet-high) Build the thing')
+  test('says what is empty and what could not be read, never an empty-looking line for either', () => {
+    const text = briefingText({
+      plan: null,
+      owed: ok([]),
+      cards: ok([]),
+      agents: { ok: false, reason: 'the engine did not list this session\'s sub-agents' },
+      git: { ok: false, reason: 'git status exited 128' },
+    })
+    expect(text).toContain('You are on no plan.')
+    expect(text).toContain('Cards in flight: none on your plan.')
+    expect(text).toContain("Sub-agents: not known (the engine did not list this session's sub-agents).")
+    expect(text).toContain('Work not pushed: not known (git status exited 128).')
+  })
+
+  test('counts the rest past eight cards or agents, and words a clean checkout and a branch with no upstream', () => {
     const cards = Array.from({ length: 10 }, (_, i) => ({ id: `DX-${i + 1}`, title: `Card ${i + 1}` }))
-    expect(cardListSlot(ok(cards))).toContain('DX-8 Card 8, and 2 more')
-    expect(cardListSlot(ok(cards))).not.toContain('DX-9 ')
-  })
-
-  test('a source that could not be read is said as unknown with its reason, never as an empty value', () => {
-    const empty = [cardListSlot(ok([])), agentListSlot(ok([])), owedListSlot(ok([]))]
-    expect(cardListSlot({ ok: false, reason: 'the view failed' })).toContain('the view failed')
-    expect(agentListSlot({ ok: false, reason: 'the engine did not list' })).toContain('the engine did not list')
-    expect(gitStatusSlot({ ok: false, reason: 'git status exited 128' })).toContain('git status exited 128')
-    expect(owedListSlot({ ok: false, reason: 'http 503' })).toContain('http 503')
-    for (const failed of [cardListSlot({ ok: false, reason: 'x' }), agentListSlot({ ok: false, reason: 'x' }), owedListSlot({ ok: false, reason: 'x' })]) expect(empty).not.toContain(failed)
-  })
-
-  test('the git slot says branch, uncommitted paths and unpushed commits, in the singular and plural, for a detached checkout and for a branch with no upstream', () => {
-    expect(gitStatusSlot(ok(GIT))).toContain('(branch card/x): 3 uncommitted paths, 2 unpushed commits')
-    expect(gitStatusSlot(ok({ ...GIT, changed: 1, ahead: 1 }))).toContain('1 uncommitted path, 1 unpushed commit')
-    expect(gitStatusSlot(ok({ ...GIT, changed: 0, ahead: 0 }))).toContain('no uncommitted changes, nothing unpushed')
-    expect(gitStatusSlot(ok({ branch: null, changed: 0, upstream: null, ahead: null }))).toContain('a detached checkout')
-    expect(gitStatusSlot(ok({ branch: null, changed: 0, upstream: null, ahead: null }))).toContain('no upstream branch')
+    const text = briefingText({ plan: null, owed: ok([]), cards: ok(cards), agents: ok([]), git: ok({ branch: null, changed: 0, upstream: null, ahead: null }) })
+    expect(text).toContain('DX-8 Card 8, and 2 more.')
+    expect(text).toContain('Sub-agents running: none.')
+    expect(text).toContain('(a detached checkout): no uncommitted changes, no upstream branch (nothing on it is pushed).')
+    expect(briefingText({ plan: null, owed: ok([]), cards: ok([]), agents: ok([]), git: ok({ ...GIT, changed: 1, ahead: 1 }) })).toContain('1 uncommitted path, 1 unpushed commit.')
+    expect(briefingText({ plan: null, owed: ok([]), cards: ok([]), agents: ok([]), git: ok({ ...GIT, changed: 0, ahead: 0 }) })).toContain('no uncommitted changes, nothing unpushed.')
   })
 
   const OWED = [
     { cardId: 'DX-6', cardTitle: 'Other', commentId: 9, author: { name: 'Wren' }, excerpt: { text: 'ok?' }, state: 'seen' as const, waitedMs: 3 * 3_600_000 },
     { cardId: 'DX-5075', cardTitle: 'Some card', commentId: 17031, author: { name: 'Dan' }, excerpt: { text: 'Please also cover the retry path' }, state: 'sent' as const, waitedMs: 5 * 60_000 },
   ]
+  const EMPTY_GIT = ok({ branch: null, changed: 0, upstream: null, ahead: null })
 
-  test('the owed slot lists every owed comment in the order given, with state, wait and excerpt, never capped', () => {
-    const text = owedListSlot(ok(OWED))
+  test('lists every owed comment before the plan, oldest first, with state, wait and the two-step reply', () => {
+    const text = briefingText({ plan: { ref: 'PLAN-1', name: 'P' }, owed: ok(OWED), cards: ok([]), agents: ok([]), git: EMPTY_GIT })
     expect(text).toContain('DX-5075 Some card, comment 17031 from Dan [Sent, waiting 5 min]: "Please also cover the retry path"')
     expect(text).toContain('DX-6 Other, comment 9 from Wren [Seen, waiting 3 h]: "ok?"')
     expect(text.indexOf('comment 9 ')).toBeLessThan(text.indexOf('comment 17031'))
-    const many = Array.from({ length: 30 }, (_, i) => ({ ...OWED[0]!, commentId: 1000 + i }))
-    expect(owedListSlot(ok(many)).split('; ')).toHaveLength(30)
+    expect(text.indexOf('comment 9 ')).toBeLessThan(text.indexOf('Your plan is'))
+    expect(text).toContain('POST /api/issues/<card>/comments/<commentId>/reply')
+    expect(text).toContain('phase "ack" and your short acknowledgement as body; skip this for one that is Seen')
+    expect(text).toContain('phase "reply" and the answer as body')
+  })
+
+  test('says none owed, and says a failed owed-comments read as a failure, never as none', () => {
+    const base = { plan: null, cards: ok([]), agents: ok([]), git: EMPTY_GIT }
+    expect(briefingText({ ...base, owed: ok([]) })).toContain('Comments you still owe an answer: none.')
+    const failed = briefingText({ ...base, owed: { ok: false, reason: 'http 503' } })
+    expect(failed).toContain('Comments you still owe an answer: NOT KNOWN, the read failed (http 503).')
+    expect(failed).not.toContain('owe an answer: none')
   })
 })
 
@@ -778,7 +796,7 @@ for (const surface of SURFACES) {
       expect((await $.classic.PreCompact(PRE('auto', { agent_id: 'a1' }))).block).toBe(HELD_REASON)
     })
 
-    test('a compaction in the middle of a turn carries the briefing beside the bundle text, with the slots filled, on the next tool result', async ($, on) => {
+    test('a compaction in the middle of a turn carries the resume briefing beside the registry text, on the next tool result', async ($, on) => {
       on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       on('classic.SessionStart', () => ({}) as any)
       const d = dashboard(on)
@@ -793,11 +811,12 @@ for (const surface of SURFACES) {
       const tool = await $.tool.call({ tool: 'Bash', command: 'ls' } as any)
       const told = tool.context!
       expect(told).toHaveLength(1)
-      expect(told[0]!.startsWith(EVENT_TEXT('after_compaction'))).toBe(true)
-      expect(told[0]).toContain(COMPACTED_MARK)
-      expect(told[0]).toContain('a1 (50arms:worker-sonnet-high) Build the thing')
-      expect(told[0]).not.toContain('Done already')
-      expect(told[0]).toContain('(branch card/x): 1 uncommitted path, 2 unpushed commits')
+      const [registry, briefing] = told[0]!.split('\n')
+      expect(registry).toBe(EVENT_TEXT('after_compaction'))
+      expect(briefing).toContain('[50 ARMS] Your conversation was just compacted.')
+      expect(briefing).toContain('Sub-agents still running (they carried on through the compaction): a1 (50arms:worker-sonnet-high) Build the thing.')
+      expect(briefing).not.toContain('a2')
+      expect(briefing).toContain('(branch card/x): 1 uncommitted path, 2 unpushed commits.')
       // told once
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(0)
     })
@@ -811,8 +830,8 @@ for (const surface of SURFACES) {
       await $.prompt.submit({ text: 'go' })
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: OWN_SESSION.session_id })
       const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context![0]!
-      expect(told).toContain('git status exited 128')
-      expect(told).toContain('Sub-agents running: none running')
+      expect(told).toContain('Work not pushed: not known (git status exited 128).')
+      expect(told).toContain('Sub-agents running: none.')
     })
 
     test('a compaction briefing lists the owed comments the dashboard names, and says a failed read as a failure', async ($, on) => {
@@ -828,8 +847,7 @@ for (const surface of SURFACES) {
       d.world.reportReplies['GET /api/plan-sessions/me/owed-comments'] = { status: 503, body: { error: 'down' } }
       await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: OWN_SESSION.session_id })
       const failed = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context![0]!
-      expect(failed).toContain('NOT KNOWN')
-      expect(failed).not.toContain('Cover retry too')
+      expect(failed).toContain('Comments you still owe an answer: NOT KNOWN, the read failed')
     })
 
     test('a startup or resume carries no briefing', async ($, on) => {
@@ -837,7 +855,7 @@ for (const surface of SURFACES) {
       const d = dashboard(on)
       await startSession($, d, surface)
       const first = await $.prompt.submit({ text: 'go', source: 'startup' } as any)
-      expect(first.context!.join('\n')).not.toContain(COMPACTED_MARK)
+      expect(first.context!.join('\n')).not.toContain('Your conversation was just compacted')
     })
   })
 }

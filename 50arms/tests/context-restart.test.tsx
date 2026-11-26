@@ -4,10 +4,9 @@ import "./run-tests-with-npm-test.generated"
 // tells the model that answer and surfaces a stop. Both surfaces: the model's context and the failure line.
 import { describe, expect } from 'claude-code/testing'
 
-import { SIGN_IN_INVITATION } from '../hooks/bundle/floor'
-import { CONTEXT_DEADLINE_MS, restartFailureLine } from '../hooks/context/events'
+import { CONTEXT_DEADLINE_MS, SIGN_IN_INVITATION, restartFailureLine } from '../hooks/context/events'
 import { BLOCKED_LINE } from '../hooks/plan/config'
-import { test, CLEARED_SESSION_ID, SESSION_ID, CLASSIFIER_REFUSAL, EVENT_TEXT, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
+import { test, CLEARED_SESSION_ID, SESSION_ID, CLASSIFIER_REFUSAL, SURFACES, dashboard, firstPrompt, startSession } from './plan-kit'
 
 const NOTICE = 'This session replaced one on PLAN-23; 3 events wait.'
 const stopped = (reason: string, detail: string) => ({ stopped: { reason, detail, fix: 'continue without it; call session_connect' } })
@@ -58,7 +57,7 @@ for (const surface of SURFACES) {
       const d = await started($, on, {})
       d.world.restart.json = { notice: NOTICE }
       const r = await firstPrompt($, 'resume')
-      expect(r.startLines).toEqual([EVENT_TEXT('session_resume')])
+      expect(r.startLines).toEqual(['The session_resume text.'])
       expect(d.restartCalls).toEqual([])
     })
 
@@ -99,7 +98,7 @@ for (const surface of SURFACES) {
     test('a session that holds a key but is on no plan (a person who signed in and has not connected) is told the notice too, after its event text (DX-5554)', async ($, on) => {
       const d = await started($, on, { connected: false })
       d.world.restart.json = { notice: NOTICE }
-      expect((await firstPrompt($, 'resume')).startLines).toEqual([`${EVENT_TEXT('session_resume')}
+      expect((await firstPrompt($, 'resume')).startLines).toEqual([`The session_resume text.
 ${NOTICE}`])
     })
 
@@ -156,14 +155,20 @@ ${NOTICE}`])
       expect(r.startLines![0]).toContain('call session_connect')
     })
 
-    // DX-3421: the restart notice is the server's own lookup and needs neither the plans read nor a key, so a plans read that fails never takes it away
-    test('DX-3421: a plans read that fails with a dashboard fault still asks the restart notice, and the notice is told', async ($, on) => {
+    test('DX-3421: a plans read that fails with a dashboard fault is silent for the event text, and the restart notice is still asked', async ($, on) => {
       const d = await started($, on, { connected: false })
       d.world.sessionReadStatus = 500
       d.world.restart.json = { notice: NOTICE }
       const r = await firstPrompt($, 'startup')
-      expect(r.startLines!.join('\n')).toContain(NOTICE)
+      expect(r.startLines).toEqual([NOTICE])
       expect(d.restartCalls).toEqual([{}])
+    })
+
+    test('DX-3421: a plans read that fails with a dashboard fault and no notice is quiet', async ($, on) => {
+      const d = await started($, on, { connected: false })
+      d.world.sessionReadStatus = 503
+      expect((await firstPrompt($, 'resume')).startLines).toBeUndefined()
+      expect(d.contextReads.filter(p => p.startsWith('/api/reminders/event/'))).toEqual([])
     })
 
     test('a slow answer inside the deadline is told', async ($, on) => {

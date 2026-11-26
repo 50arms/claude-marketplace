@@ -1,7 +1,6 @@
 import "./run-tests-with-npm-test.generated"
-// DX-4234 / CP-146: the model's time stamp, on each prompt and on no tool call (CP-52, DEC-793: PBLM-1915's stamp after every call told the model nothing new and every later model call re-read it). The text is pure
-// (hooks/context/stamp.ts, exact here with an explicit UTC offset); the hooks are checked as the engine runs them, on both surfaces. The stamp reaches the model as the `clock_time` slot of the bundle's
-// `prompt.submit` text, told first among a prompt's entries, so a session that cannot read the bundle (signed out) has none.
+// DX-4234: the model's time stamp, on each prompt and on no tool call (CP-52, DEC-793: PBLM-1915's stamp after every call told the model nothing new and every later model call re-read it). The text is pure
+// (hooks/context/stamp.ts, exact here with an explicit UTC offset); the hooks are checked as the engine runs them, on both surfaces.
 import { describe, expect } from 'claude-code/testing'
 
 import { stamp } from '../hooks/context/stamp'
@@ -70,13 +69,6 @@ for (const surface of SURFACES) {
       expect(second.context).toHaveLength(1)
       expect(second.context![0]).toMatch(TIME_ONLY)
       expect(second.context![0].endsWith(' +7s')).toBe(true)
-    })
-
-    test("a signed-out session's prompt carries no stamp: the stamp is the bundle's text, and a session with no key cannot read the bundle", async ($, on) => {
-      const d = dashboard(on, { connected: false, signedOut: 'signed-out' })
-      await startSession($, d, surface)
-      expect((await $.prompt.submit({ text: 'hello' })).context ?? []).toHaveLength(0)
-      expect(d.contextReads).toEqual([])
     })
 
     test('tool.call: a finished call, an errored one and a denied one carry no stamp, however long the session has run', async ($, on) => {

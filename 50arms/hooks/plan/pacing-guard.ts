@@ -53,7 +53,6 @@ export const REFUSAL_PREFIX = 'Usage pacing:'
 export const PACED_STOP = 'Record any unrecorded state on the card it concerns, pause with PUT /api/plan-sessions/me/pause {waits_on: "pacing"}, do not do the work yourself, and wait until you are told to continue.'
 
 // the refusal the model reads, worded from the cause 50 Arms' own claim answer names (`refusal`, from its `refusalOf`), never re-derived here.
-// Refusal (section 565 "Refusals" of the event-system plan): a refusal the pacing check decides, so its words stay code. It decides on the verdict of `GET /api/pacing/line` and the slot claim (`POST /api/pacing/agents/claim`).
 export function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved'): string {
   const level = v.level.replace('_', ' ')
   const budget = v.budget === null ? 'no cap' : v.budget === 0 ? 'budget 0 (start no sub-agent)' : `budget ${v.budget} at once`
@@ -150,7 +149,6 @@ export function unknownAgentTypeModelReason(subagentType: string): string {
 }
 
 // Why a spawn is refused when its claim could not be made (fail closed).
-// Refusal (section 565 "Refusals" of the event-system plan): the spawn guard is fail-closed when the claim cannot be made, so this refusal stays code.
 export function claimFailedReason(failure: string): string {
   return (
     `${REFUSAL_PREFIX} the spawn could not claim its slot from 50 Arms (${failure}). The budget is a strict cap, so no sub-agent starts until the ` +

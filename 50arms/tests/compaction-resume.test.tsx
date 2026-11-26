@@ -1,11 +1,11 @@
 import "./run-tests-with-npm-test.generated"
 // DX-5385: a compaction that ends while no turn runs (the plugin's own after the agent's ready, or a typed /compact) leaves the agent idle: nothing is coming to carry
-// the briefing. The plugin starts the turn itself with ONE resume prompt (the relay's prompt path), only for the main agent of a plan-connected session. The prompt's words are the bundle's
-// `session.after_compaction` texts (CP-146); the plugin fills the slots (plan, cards, sub-agents, owed comments, git), and the kit's stand-in text names them.
+// the briefing. The plugin starts the turn itself with ONE resume prompt (the relay's prompt path), only for the main agent of a plan-connected session.
 import { describe, expect } from 'claude-code/testing'
 
+import { RESUME_PROCEDURE, briefingText } from '../hooks/compaction/briefing'
 import { relayLine, repeatLine } from '../hooks/relay/delivery'
-import { CLEARED_SESSION_ID, COMPACTED_MARK, EVENT_TEXT, SESSION_ID, SURFACES, dashboard, startSession, test } from './plan-kit'
+import { CLEARED_SESSION_ID, SESSION_ID, SURFACES, TOLD, dashboard, startSession, test } from './plan-kit'
 
 const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
@@ -18,7 +18,18 @@ const restartMain = async ($: any) => {
   await $.session.compact({ trigger: 'manual', messages: TRANSCRIPT })
   await $.classic.SessionStart(COMPACT)
 }
-const resumes = (d: any) => d.relay.submitted.filter((t: string) => t.includes(COMPACTED_MARK))
+const resumes = (d: any) => d.relay.submitted.filter((t: string) => t.includes('Your conversation was just compacted'))
+
+describe('the resume procedure (pure)', () => {
+  test('names the five steps in order, and the briefing carries it', () => {
+    const at = ['re-invoke every skill', 'newest handoff agent note', 're-read each In Progress card', 'check your running sub-agents', 'continue the step that was in progress'].map(s => RESUME_PROCEDURE.indexOf(s))
+    expect(at.every(i => i >= 0)).toBe(true)
+    expect([...at].sort((a, b) => a - b)).toEqual(at)
+    expect(RESUME_PROCEDURE).toContain('without asking the person')
+    const ok = <T,>(value: T) => ({ ok: true as const, value })
+    expect(briefingText({ plan: null, owed: ok([]), cards: ok([]), agents: ok([]), git: ok({ branch: null, changed: 0, upstream: null, ahead: null }) })).toContain(RESUME_PROCEDURE)
+  })
+})
 
 for (const surface of SURFACES) {
   describe(`the resume prompt on ${surface}`, () => {
@@ -41,12 +52,12 @@ for (const surface of SURFACES) {
       expect(resumes(d)).toHaveLength(1)
       const [prompt] = resumes(d)
       expect(prompt.startsWith(relayLine(''))).toBe(true)
-      expect(prompt).toContain(EVENT_TEXT('after_compaction'))
-      // the values the plugin filled into the bundle's slots
+      expect(prompt).toContain(TOLD('after_compaction').split('\n')[0])
+      expect(prompt).toContain(RESUME_PROCEDURE)
       expect(prompt).toContain('Your plan is PLAN-23 50 Arms plugin.')
       expect(prompt).toContain('Cards in flight on your plan: DX-9')
-      expect(prompt).toContain('a1 (50arms:worker-sonnet-high) build the thing')
-      expect(prompt).toContain('(branch main)')
+      expect(prompt).toContain('Sub-agents still running (they carried on through the compaction): a1 (50arms:worker-sonnet-high) build the thing.')
+      expect(prompt).toContain('Work not pushed')
       expect((await $.prompt.submit({ text: 'next' })).context).toHaveLength(1)
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(0)
       expect(resumes(d)).toHaveLength(1)
@@ -86,8 +97,8 @@ for (const surface of SURFACES) {
       expect(resumes(d)).toHaveLength(0)
       const told = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context!
       expect(told).toHaveLength(1)
-      expect(told[0]).toContain(EVENT_TEXT('after_compaction'))
-      expect(told[0]).toContain(COMPACTED_MARK)
+      expect(told[0]).toContain(TOLD('after_compaction').split('\n')[0])
+      expect(told[0]).toContain(RESUME_PROCEDURE)
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(0)
       await $.turn.complete(TURN)
       await d.clock.settle()
@@ -115,15 +126,15 @@ for (const surface of SURFACES) {
       expect(((await $.prompt.submit({ text: 'next' })).context ?? []).join(' ')).toContain('Your conversation was just compacted')
     })
 
-    // CP-146: a start the plugin cannot read for is no briefing and no failure line of its own: the context is held, the resume prompt is the loading line, and the briefing is owed until a bundle answers
-    test('when the dashboard reads fail the prompt is the loading line, and the briefing is owed', async ($, on) => {
+    test('when the dashboard reads fail the prompt is the warning line plus the resume procedure', async ($, on) => {
       const d = await started($, on)
       d.world.sessionReadStatus = 500
       await restartMain($)
       await d.clock.settle()
-      expect(d.relay.submitted).toHaveLength(1)
-      expect(d.relay.submitted[0]).toMatch(/loading/)
-      expect(resumes(d)).toHaveLength(0)
+      expect(resumes(d)).toHaveLength(1)
+      const [prompt] = resumes(d)
+      expect(prompt).toContain(RESUME_PROCEDURE)
+      expect(prompt).toContain('Could not load the "after_compaction" event text')
     })
 
     test('a session that is not on a plan gets no resume prompt', async ($, on) => {
@@ -150,7 +161,7 @@ for (const surface of SURFACES) {
       expect(d.toasts.some((t: string) => t.startsWith('The resume prompt was not taken by the session:'))).toBe(true)
       d.relay.acceptPrompts()
       const next = await $.prompt.submit({ text: 'next' })
-      expect(next.context!.slice(1)[0]).toContain(COMPACTED_MARK)
+      expect(next.context!.slice(1)[0]).toContain(RESUME_PROCEDURE)
       expect((await $.prompt.submit({ text: 'again' })).context).toHaveLength(1)
     })
 
@@ -160,7 +171,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.relay.submitted).toEqual([])
       const next = await $.prompt.submit({ text: 'next' })
-      expect(next.context!.slice(1)[0]).toContain(COMPACTED_MARK)
+      expect(next.context!.slice(1)[0]).toContain(RESUME_PROCEDURE)
       expect((await $.prompt.submit({ text: 'again' })).context).toHaveLength(1)
     })
 
@@ -172,7 +183,7 @@ for (const surface of SURFACES) {
       await d.clock.advance(5_000)
       await d.clock.settle()
       expect(d.relay.submitted).toEqual([])
-      expect(d.relay.told.filter((t: string) => t.includes(COMPACTED_MARK))).toHaveLength(1)
+      expect(d.relay.told.filter((t: string) => t.includes(RESUME_PROCEDURE))).toHaveLength(1)
       d.world.contextDelayMs = 0
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context).toHaveLength(0)
     })
@@ -184,12 +195,12 @@ for (const surface of SURFACES) {
       await $.turn.start(START)
       await d.clock.advance(5_000)
       await d.clock.settle()
-      expect(d.relay.told.filter((t: string) => t.includes(COMPACTED_MARK))).toHaveLength(1)
+      expect(d.relay.told.filter((t: string) => t.includes(RESUME_PROCEDURE))).toHaveLength(1)
       await $.turn.complete(TURN)
       await d.clock.settle()
       expect(resumes(d)).toHaveLength(1)
       expect(resumes(d)[0]).toContain(repeatLine('').trim())
-      expect(resumes(d)[0]).toContain(COMPACTED_MARK)
+      expect(resumes(d)[0]).toContain(RESUME_PROCEDURE)
     })
 
     test('a refused note puts the start back, but never over a newer start that arrived meanwhile', async ($, on) => {
@@ -220,7 +231,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(d.relay.submitted).toEqual([])
       d.world.contextDelayMs = 0
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context![0]).toContain(COMPACTED_MARK)
+      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).context![0]).toContain(RESUME_PROCEDURE)
     })
 
     test('a startup, resume or clear starts no prompt', async ($, on) => {

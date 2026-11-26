@@ -1,18 +1,31 @@
 import "./run-tests-with-npm-test.generated"
 // DX-5344: whose compaction a resume briefing follows. Claude Code's classic SessionStart input never names the agent that compacted (2.1.299: its `agent_id` is always absent),
 // so the plugin notes WHO compacts at the `session.compact` proposal that passed and reads that note when the `compact` start arrives. A sub-agent's compaction briefs THAT sub-agent
-// (once, in its next tool result, never the main agent's prompt); the main agent's own compaction briefing is unchanged. CP-146: the words are the bundle's (`subagent.compacted` and `session.after_compaction`); the plugin
-// fills the slots (the sub-agent's id and name, the plan, the cards) and decides who is told and when. The kit's stand-in texts carry a mark each.
+// (once, in its next tool result, never the main agent's prompt); the main agent's own compaction briefing is unchanged.
 import { describe, expect } from 'claude-code/testing'
 
-import { COMPACTED_MARK, SUB_BRIEFING, SURFACES, dashboard, startSession, test } from './plan-kit'
+import { subagentBriefingText } from '../hooks/compaction/briefing'
+import { SURFACES, dashboard, startSession, test } from './plan-kit'
 
 const COMPACTED = { messages: [{ role: 'user', text: 'the summary', toolUses: [] }] }
 const TRANSCRIPT = [{ role: 'user', text: 'go', toolUses: [], handle: 'm1' }]
 const AGENT = { id: 'a1', type: '50arms:worker-sonnet-high', description: 'build the thing', status: 'running' }
 // the line only the main agent's briefing carries (a sub-agent's opens with the same words but names no plan; the running AGENT is listed in the main one, so the whole text is not pinned)
 const MAIN = 'Your plan is PLAN-23 50 Arms plugin.'
-const NAME = `${AGENT.type} ${AGENT.description}`
+
+describe('the sub-agent briefing text (pure)', () => {
+  test('names the agent and its task, points at its own summary and progress notes, and carries no plan or card', () => {
+    const text = subagentBriefingText({ id: 'a1', type: '50arms:worker-sonnet-high', description: 'build the thing' })
+    expect(text).toMatch(/^\[50 ARMS\] Your conversation was just compacted\./)
+    expect(text).toContain('a1 (50arms:worker-sonnet-high) build the thing')
+    expect(text).toMatch(/progress notes/)
+    expect(text).not.toMatch(/Cards in flight|Your plan is/)
+  })
+
+  test('an agent the engine does not list is briefed by its id alone', () => {
+    expect(subagentBriefingText({ id: 'a9', type: null, description: null })).toContain('You are sub-agent a9.')
+  })
+})
 
 for (const surface of SURFACES) {
   describe(`whose compaction the briefing follows on ${surface}`, () => {
@@ -39,7 +52,7 @@ for (const surface of SURFACES) {
       const toolResult = async (agentId?: string) => (((await $.tool.call({ tool: 'Bash', command: 'ls', ...(agentId === undefined ? {} : { agentId }) } as any)).context ?? []) as string[])
       return { d, core, hold, propose, compactStart, prompt, toolResult, stop: (id: string) => $.classic.SubagentStop({ agent_id: id, agent_type: AGENT.type }) }
     }
-    const briefings = (lines: string[]) => lines.filter(l => l.includes(COMPACTED_MARK))
+    const briefings = (lines: string[]) => lines.filter(l => l.includes('Your conversation was just compacted'))
 
     test("a sub-agent's compaction adds no briefing to the main agent's next prompt", async ($, on) => {
       const k = await started($, on)
@@ -55,7 +68,7 @@ for (const surface of SURFACES) {
       expect(briefings(await k.toolResult('a2'))).toEqual([])
       expect(briefings(await k.toolResult())).toEqual([])
       const own = briefings(await k.toolResult('a1'))
-      expect(own).toEqual([SUB_BRIEFING('a1', NAME)])
+      expect(own).toEqual([subagentBriefingText({ id: 'a1', type: AGENT.type, description: AGENT.description })])
       expect(briefings(await k.toolResult('a1'))).toEqual([])
     })
 
@@ -100,8 +113,8 @@ for (const surface of SURFACES) {
       await k.compactStart()
       await k.compactStart()
       expect(briefings(await k.prompt())).toEqual([])
-      expect(briefings(await k.toolResult('a2'))).toEqual([SUB_BRIEFING('a2', `${AGENT.type} the other task`)])
-      expect(briefings(await k.toolResult('a1'))).toEqual([SUB_BRIEFING('a1', NAME)])
+      expect(briefings(await k.toolResult('a2'))).toEqual([subagentBriefingText({ id: 'a2', type: AGENT.type, description: 'the other task' })])
+      expect(briefings(await k.toolResult('a1'))).toEqual([subagentBriefingText({ id: 'a1', type: AGENT.type, description: AGENT.description })])
       expect(briefings(await k.toolResult('a1'))).toEqual([])
       expect(briefings(await k.toolResult('a2'))).toEqual([])
     })
@@ -150,11 +163,18 @@ for (const surface of SURFACES) {
       expect((await k.prompt()).join('\n')).toContain(MAIN)
     })
 
-    test('an agent the engine does not list is briefed by its id alone', async ($, on) => {
-      const k = await started($, on)
-      await k.propose('a9')
-      await k.compactStart()
-      expect(briefings(await k.toolResult('a9'))).toEqual([SUB_BRIEFING('a9', 'a9')])
+    test('a session that is on no plan briefs no sub-agent either', async ($, on) => {
+      on('classic.SessionStart', () => ({}) as any)
+      on('classic.PreCompact', () => ({}) as any)
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
+      on('session.compact', async () => COMPACTED as any)
+      const d = dashboard(on, { connected: false })
+      d.world.agents = [AGENT]
+      await startSession($, d, surface)
+      await $.session.compact({ trigger: 'auto', messages: TRANSCRIPT, agentId: 'a1' })
+      await $.classic.SessionStart({ source: 'compact', cwd: '/work', session_id: 'own', transcript_path: '/work/main.jsonl' })
+      const r = ((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as any)).context ?? []) as string[]
+      expect(briefings(r)).toEqual([])
     })
   })
 }

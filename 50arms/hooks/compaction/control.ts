@@ -35,7 +35,6 @@
 // less the largest single step seen), and the relay writes it into the file as `passAtTokens`: the gate reads that number and holds no copy of the margin,
 // so a change to the margin moves every gate. Pinned by the same literal in this plugin's tests and in the relay's own tests.
 
-// Refusal (section 565 "Refusals" of the event-system plan): a PreCompact refusal the compaction handshake decides (the control file), and it fails open with no dashboard, so it stays code.
 export const HELD_REASON = '[50 ARMS] automatic compaction is held: your agent compacts the session when it says ready'
 
 // `windowTokens` is the context window 50 Arms assumed for the session's model (its table lists a window per exact model version); the floor and

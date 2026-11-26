@@ -1,10 +1,6 @@
 // Pure: nothing here reads a clock, a file or a session. The wording the model is told for a finished sub-agent is the 50 Arms registry's (`sub_agent_stop`);
 // this file only works out WHICH agent finished and names it.
 
-import type { FinishedAgent } from '../../types'
-
-export type { FinishedAgent }
-
 const DESCRIPTION_MAX = 80
 
 /**
