@@ -5683,12 +5683,12 @@ async function tellEvent($: any, event: string, agentId: unknown, budget: Budget
   const events = [...owed.map(o => ({ event: o, matchers: {} as Record<string, string>, mechanisms: null as readonly string[] | null })), ...(taking === 'only' ? [] : [{ event, matchers: moment.matchers ?? {}, mechanisms: moment.mechanisms ?? null }])]
   // a compaction or a clear of the main conversation starts it again: its role is told again (AC 76950)
   if (key === mainContext && events.some(m => startsNewContext(m.event))) await update($, behavior, cur => ({ ...cur, roleTold: null }))
-  // The role is fetched only while the bundle lists `session.bind` (a dashboard that does not carries none), and the key the main conversation holds is claimed before the fetch, so two hooks landing together (or a hook and a retell) fetch and tell it once.
+  // The role is fetched when `session.bind` is told, and the key the main conversation holds is claimed before the fetch, so two hooks landing together (or a hook and a retell) fetch and tell it once.
   // A role that is not delivered gives the claim back.
   let roleClaim: { before: string | null } | null = null
   // the key is already told (or being told by another hook): this call delivers nothing, and still ends a hold that nothing keeps
   let roleLost = false
-  if (event === BIND_EVENT && key === mainContext && bundle.events.some(e => e.event === BIND_EVENT)) {
+  if (event === BIND_EVENT && key === mainContext) {
     const roleKey = roleKeyOf(await read($, view))
     const claim: { won: boolean; before: string | null } = { won: false, before: null }
     await update($, behavior, cur => {

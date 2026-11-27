@@ -246,14 +246,6 @@ for (const surface of SURFACES) {
         expect((await tool($)).deny).toBeUndefined()
       })
 
-      test('a bundle with no session.bind event makes no role fetch', async ($, on) => {
-        const d = await started($, on)
-        d.world.role = ROLE()
-        const first = await firstPrompt($, 'startup')
-        expect(roleTold(first.context)).toEqual([])
-        expect(d.world.roleReads).toEqual([])
-      })
-
       test('a role over the entry cap is delivered through the temporary file the agent is told to read', async ($, on) => {
         const d = await started($, on)
         d.world.bundle.events['session.bind'] = bundleEvent('session.bind', [], { cap: 10_000 })

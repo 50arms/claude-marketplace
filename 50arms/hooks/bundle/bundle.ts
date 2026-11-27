@@ -1,6 +1,6 @@
 // The policy bundle 50 Arms renders for one session (`GET /api/behavior-events/bundle`) and how the plugin evaluates one plugin event from it.
 // Pure: every `$` call stays in register.tsx. The bundle is the ONE source of every text an agent is told at a hook moment (the mantra, the
-// start, resume, compaction and sub-agent texts, the role pointer, the plan's own event text); this file composes none of them, it only
+// start, resume, compaction and sub-agent texts, the plan's own event text); this file composes none of them, it only
 // decides which attachments apply to a moment, fills the slots the plugin owns, and keeps a once-only text from being told twice.
 
 import type { Bundle, BundleAttachment, BundleComputed, BundleEvent, BundleMechanism, BundleRule, BundleSection, Frequency, Held, RelayState, Told } from '../../types'
