@@ -27,7 +27,32 @@ import { offerOf } from '../ready/offer'
 // `seq`: the event's place in that order, ascending in the outbox and in the atom (which keeps the outbox's order, so it survives a reload).
 // `held` (always set): a put-back event waits out the backoff and is not issued until it is released.
 // `again`: it was delivered once and put back; its cursor is stored already, so issuing it again stores none.
-export type Queued = { planId: number | null; seq: number; event: RelayEvent; held: boolean; again?: true }
+// `why`, `triedAt`, `heldAt` (memory only: a reload starts them again): why the head is held (the refusal text, or the host call that timed out), when its
+// engine call was last made, and when it was put back; the stall watch reports a head undelivered for long and releases one held past its backoff.
+export type Queued = { planId: number | null; seq: number; event: RelayEvent; held: boolean; again?: true; why?: string; triedAt?: number; heldAt?: number }
+
+// The stall watch's look at the head of the outbox: which event it is, since when it has been the head, and whether the delay was told.
+export type HeadWatch = { seq: number; since: number; told: boolean }
+
+// The watch after a look at `head` at `now`: another event is a new watch, no head ends it.
+export function watchHead(watch: HeadWatch | null, head: Queued | undefined, now: number): HeadWatch | null {
+  if (head === undefined) return null
+  return watch !== null && watch.seq === head.seq ? watch : { seq: head.seq, since: now, told: false }
+}
+
+// What a head undelivered for longer than `afterMs` reads as, once per head: how long it has waited, what it waits on, and when it was last tried.
+export type HeadDelay = { waitedSeconds: number; why: string; triedAgoSeconds: number | null }
+export function headDelay(watch: HeadWatch, head: Queued, now: number, afterMs: number): HeadDelay | null {
+  if (watch.told || now - watch.since <= afterMs) return null
+  return {
+    waitedSeconds: Math.round((now - watch.since) / 1000),
+    why: head.why ?? 'it has not been issued yet',
+    triedAgoSeconds: head.triedAt === undefined ? null : Math.round((now - head.triedAt) / 1000),
+  }
+}
+
+// A held head whose hold has outlasted `maxMs` (its backoff and every step after the refusal are bounded, so only a wait that never returned does this).
+export const holdOverran = (head: Queued, now: number, maxMs: number): boolean => head.held && head.heldAt !== undefined && now - head.heldAt > maxMs
 
 // What a run on `planId` polls from: the cursor of the newest event of that plan taken and not yet delivered, else the stored one. A put-back event
 // (`again`) was delivered already, so its cursor is older than the stored one and is never polled from; cursors are opaque and are never compared.

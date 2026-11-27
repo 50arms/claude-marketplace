@@ -44,6 +44,19 @@ export const OLD_SERVER_AFTER_MS = 8_000
 export const RELAY_STALL_MS = 90_000
 export const RELAY_STALL_CHECK_MS = 30_000
 
+// The outbox's host calls (a state read or write, the clock, the model note, the dashboard call that takes the session off the ready list) each answer within
+// RELAY_CALL_MS or are a failure: a call that never settles must not leave the head of the outbox held or the pump unable to run. A timed-out issue
+// puts the head back for the backoff; a timed-out step after a refusal is toasted and the head is released by the backoff all the same.
+export const RELAY_CALL_MS = 10_000
+
+// The head of the outbox undelivered for longer than this is told to the session (once per event) and the person, with how long and what it waits on. Judged
+// by the stall watch's tick, so the telling is late by at most RELAY_STALL_CHECK_MS.
+export const OUTBOX_DELAY_MS = 120_000
+
+// A head held longer than this has outlasted its backoff and every bounded step after the refusal (the backoff's wait itself never returned): the stall watch
+// releases it, with a toast.
+export const OUTBOX_HELD_MAX_MS = 60_000
+
 // An answer that comes back sooner than this with no events is not a wait: the loop sleeps the rest, so a server that answers an
 // empty list at once cannot make it spin.
 export const MIN_ROUND_MS = 1_000

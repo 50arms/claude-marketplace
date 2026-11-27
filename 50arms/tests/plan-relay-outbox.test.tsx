@@ -8,8 +8,8 @@ import "./run-tests-with-npm-test.generated"
 // (a call that never settles) is told to the person and the session and started again.
 import { describe, expect } from 'claude-code/testing'
 
-import { BACKOFF_MS, RELAY_STALL_CHECK_MS, RELAY_STALL_MS } from '../hooks/relay/config'
-import { fromPending, pollCursor, putBack, toPending } from '../hooks/relay/outbox'
+import { BACKOFF_MS, OUTBOX_DELAY_MS, OUTBOX_HELD_MAX_MS, RELAY_CALL_MS, RELAY_STALL_CHECK_MS, RELAY_STALL_MS } from '../hooks/relay/config'
+import { fromPending, headDelay, holdOverran, pollCursor, putBack, toPending, watchHead } from '../hooks/relay/outbox'
 import type { Queued } from '../hooks/relay/outbox'
 import { stalledNotice } from '../hooks/relay/text'
 import { test, bandSilent, relayPhase, SURFACES, answerPlanConnect, dashboard, startSession } from './plan-kit'
@@ -537,6 +537,93 @@ for (const surface of SURFACES) {
       expect(d.toasts.filter(STALLED)).toHaveLength(1)
     })
 
+    // CP-180: the head put back after a refusal is held until the steps after the refusal (the stored outbox, the band, the note to the model) and the backoff have ended.
+    // A host call among them that never settled held it for good, with nothing said. Each is bounded now, and the head is released by the backoff all the same.
+    // `act` runs at the refusal's own write of the outbox atom: the submit of the event (once), then the delivered event's write, then the put-back's
+    const atPutBackWrite = (d: any, act: () => Promise<void>) => {
+      let armed = true
+      d.relay.duringPrompt(async () => {
+        if (!armed) return
+        armed = false
+        d.beforeNextWrite('relayOutbox', async () => d.beforeNextWrite('relayOutbox', act))
+      })
+    }
+
+    test('a refusal whose bookkeeping call never settles still releases the head: the next event is delivered behind it, in order, and the failed call is toasted', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      d.relay.dropPrompts('the prompt was removed from the queue before it ran')
+      atPutBackWrite(d, () => new Promise<void>(() => {}))
+      d.relay.push({ cursor: 'c1', text: 'digest' })
+      await d.clock.settle()
+      d.relay.acceptPrompts()
+      d.relay.push({ cursor: 'c2', text: 'second digest' })
+      await d.clock.advance(BACKOFF_MS[0] + RELAY_CALL_MS)
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[50 Arms plan event] digest', '[50 Arms plan event] second digest'])
+      expect(d.toasts.filter(t => t.includes('did not answer in'))).toHaveLength(1)
+      expect(pendingWrites(d).at(-1)).toEqual([])
+    })
+
+    test('a refusal whose bookkeeping call throws still releases the head', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      d.relay.rejectPrompts('busy')
+      atPutBackWrite(d, async () => d.refuseNextWrite('relayOutbox'))
+      d.relay.push({ cursor: 'c1', text: 'digest' })
+      await d.clock.settle()
+      d.relay.acceptPrompts()
+      await d.clock.advance(BACKOFF_MS[0])
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[50 Arms plan event] digest'])
+      expect(d.toasts.some(t => t.startsWith('Plan event delivery:') && t.includes('failed'))).toBe(true)
+    })
+
+    test('a read of the turn that never answers does not hold the outbox: the head is put back for the backoff and issued again', async ($, on) => {
+      const d = dashboard(on, { stateSteps: true } as any)
+      await startSession($, d, surface)
+      d.beforeNextRead('turn', () => new Promise<void>(() => {}))
+      d.relay.push({ cursor: 'c1', text: 'digest' })
+      await d.clock.advance(RELAY_CALL_MS - 1)
+      expect(d.relay.delivered).toEqual([])
+      expect(tries(d)).toBe(0)
+      await d.clock.advance(1)
+      expect(d.toasts.some(t => t.includes('reading the turn did not answer'))).toBe(true)
+      await d.clock.advance(BACKOFF_MS[0])
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[50 Arms plan event] digest'])
+    })
+
+    test('an engine that refuses every submit: the session is told once how long the oldest event waited and why, and the events flow once it accepts', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      d.relay.dropPrompts('the prompt was removed from the queue before it ran')
+      d.relay.push({ cursor: 'c1', text: 'digest' })
+      await d.clock.settle()
+      d.relay.push({ cursor: 'c2', text: 'second digest' })
+      await d.clock.advance(OUTBOX_DELAY_MS - RELAY_STALL_CHECK_MS)
+      expect(d.relay.told.filter(t => t.includes('oldest queued event'))).toEqual([])
+      await d.clock.advance(3 * RELAY_STALL_CHECK_MS)
+      const told = d.relay.told.filter(t => t.includes('oldest queued event'))
+      expect(told).toHaveLength(1)
+      expect(told[0]).toMatch(/^\[50 Arms plan event\] events delayed: the oldest queued event has waited \d+ s for delivery, waiting on: the session did not take the event: the prompt was removed from the queue before it ran; last tried \d+ s ago\./)
+      expect(d.toasts.filter(t => t.includes('oldest queued event'))).toHaveLength(1)
+      // told once, however long it goes on
+      await d.clock.advance(10 * 60_000)
+      expect(d.relay.told.filter(t => t.includes('oldest queued event'))).toHaveLength(1)
+      expect(d.relay.delivered).toEqual([])
+      d.relay.acceptPrompts()
+      await d.clock.advance(BACKOFF_MS[BACKOFF_MS.length - 1])
+      expect(d.relay.delivered.map(x => x.text)).toEqual(['[50 Arms plan event] digest', '[50 Arms plan event] second digest'])
+    })
+
+    test('a session a Stop holds is told to the person, never to the model, however long its events wait', async ($, on) => {
+      const d = dashboard(on)
+      await startSession($, d, surface)
+      d.relay.dropPrompts('the session was stopped and nobody has sent input since')
+      d.relay.push({ cursor: 'c1', text: 'digest' })
+      await d.clock.advance(OUTBOX_DELAY_MS + 3 * RELAY_STALL_CHECK_MS)
+      expect(d.toasts.filter(t => t.includes('oldest queued event'))).toHaveLength(1)
+      expect(d.relay.told.filter(t => t.includes('oldest queued event'))).toEqual([])
+    })
+
     test('a failing event that a move to another plan drops no longer holds the new plan on retrying', async ($, on) => {
       const d = dashboard(on)
       answerPlanConnect(on, d)
@@ -603,5 +690,29 @@ describe('the outbox helpers', () => {
     const back = fromPending(pending, 23, 7)
     expect(back.map(x => [x.event.cursor, x.again, x.seq])).toEqual([['c1', true, 7], ['c2', undefined, 8]])
     expect(back.every(x => !x.held)).toBe(true)
+  })
+
+  test('headDelay is due once the head has waited past the limit, names the reason and the last try, and never again for the same head', () => {
+    const head = { ...q('c1', true), held: true, why: 'busy', triedAt: 1_000 }
+    const watch = watchHead(null, head, 0)!
+    expect(headDelay(watch, head, 100_000, 120_000)).toBeNull()
+    expect(headDelay(watch, head, 121_000, 120_000)).toEqual({ waitedSeconds: 121, why: 'busy', triedAgoSeconds: 120 })
+    expect(headDelay({ ...watch, told: true }, head, 500_000, 120_000)).toBeNull()
+    expect(headDelay(watch, q('c2'), 121_000, 120_000)).toMatchObject({ why: 'it has not been issued yet', triedAgoSeconds: null })
+  })
+
+  test('watchHead keeps the watch of the same head, starts again for another, and ends with no head', () => {
+    const watch = watchHead(null, q('c1'), 5)!
+    expect(watchHead(watch, q('c1'), 99)).toBe(watch)
+    expect(watchHead(watch, q('c2'), 99)).toEqual({ seq: 2, since: 99, told: false })
+    expect(watchHead(watch, undefined, 99)).toBeNull()
+  })
+
+  test('holdOverran is a held head whose hold began longer ago than the limit', () => {
+    const held = { ...q('c1', true), held: true, heldAt: 1_000 }
+    expect(holdOverran(held, 1_000 + OUTBOX_HELD_MAX_MS, OUTBOX_HELD_MAX_MS)).toBe(false)
+    expect(holdOverran(held, 1_001 + OUTBOX_HELD_MAX_MS, OUTBOX_HELD_MAX_MS)).toBe(true)
+    expect(holdOverran({ ...held, held: false }, 1e9, OUTBOX_HELD_MAX_MS)).toBe(false)
+    expect(holdOverran({ ...held, heldAt: undefined }, 1e9, OUTBOX_HELD_MAX_MS)).toBe(false)
   })
 })

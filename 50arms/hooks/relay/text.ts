@@ -15,6 +15,11 @@ export const refusedLine = (detail: string, fix: string) => eventsLine('delayed'
 // The relay is trying again on its own: a transient failure, with the cause.
 export const delayedLine = (message: string) => `${RELAY_MARKER} events delayed: ${trim(message)}. The relay keeps retrying on its own.`
 
+// the oldest queued event has not reached the session for a long time: how long, what it waits on, when it was last tried. Never silence.
+export const headDelayedNotice = (waitedSeconds: number, why: string, triedAgoSeconds: number | null) =>
+  `events delayed: the oldest queued event has waited ${waitedSeconds} s for delivery, waiting on: ${trim(why)}; ${triedAgoSeconds === null ? 'it was not tried yet' : `last tried ${triedAgoSeconds} s ago`}. The relay keeps retrying on its own.`
+export const headDelayedLine = (waitedSeconds: number, why: string, triedAgoSeconds: number | null) => `${RELAY_MARKER} ${headDelayedNotice(waitedSeconds, why, triedAgoSeconds)}`
+
 // the relay's loop made no step for a long time (a call it waits on never settled): events were NOT reaching this session meanwhile. It is
 // started again on its own; the line is for the person (a toast) and the session (a note), never silence.
 export const stalledNotice = (seconds: number | string) =>

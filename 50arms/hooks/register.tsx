@@ -84,16 +84,16 @@ import { NO_AGENT, signInStep } from './plan/sign-in'
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
 import { busyToast, commandFailed, failureWasTold, jobHandedBack, jobPrompt, leaveFailedToast, leftToast, notTakenToast, NOT_HOLDER, PROMPT_REFUSED, RELOADED_WHILE_PREPARING, takePath, takePlanOf, withFailureTold, withoutFailuresOf, worktreePathOf, type FailureTold, type Offer } from './ready/offer'
-import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_STALL_CHECK_MS, RELAY_STALL_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
+import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, OUTBOX_DELAY_MS, OUTBOX_HELD_MAX_MS, RELAY_CALL_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_STALL_CHECK_MS, RELAY_STALL_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
 import { BROWSER_MISSING_LINE, BROWSER_SERVER, createdTab, failureOf, holdsPlanTab, paneState, type BrowserResult, type BrowserTool } from './relay/browser'
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
 import { IDLE, deliveryMode, noteAppended, relayLine, repeatLine, toolResultSent, turnEnded, turnStarted } from './relay/delivery'
 import { cursorFor, cursorKey, staleCursorKeys } from './relay/cursor'
-import { StalePendingError, ackedEventId, clearInFlight, fromPending, isLateTick, isStalled, markInFlight, onlyPlan, pollCursor, putBack, shouldDropResend, toPending } from './relay/outbox'
-import type { Queued } from './relay/outbox'
+import { StalePendingError, ackedEventId, clearInFlight, fromPending, headDelay, holdOverran, isLateTick, isStalled, markInFlight, onlyPlan, pollCursor, putBack, shouldDropResend, toPending, watchHead } from './relay/outbox'
+import type { HeadWatch, Queued } from './relay/outbox'
 import { legacyRuleCheck, legacySettingsPaths } from './relay/legacy-rule'
 import { classifierRefusal, isStaleMcpRefusal, STALE_MCP_LINE, ownServerCheck, isModelLeave, raisedByPlugin, type ApiExtra, type Refusal } from './relay/refusal'
-import { HELD_FOR_INPUT_BAND, HELD_FOR_INPUT_NOTICE, OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, STALE_PENDING_DETAIL, STALE_PENDING_FIX, delayedLine, heldForInput, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
+import { HELD_FOR_INPUT_BAND, HELD_FOR_INPUT_NOTICE, OLD_SERVER_DETAIL, OLD_SERVER_FIX, RELAY_ERROR_FIX, STALE_PENDING_DETAIL, STALE_PENDING_FIX, delayedLine, headDelayedLine, headDelayedNotice, heldForInput, notTakenLine, refusedLine, stalledLine, stalledNotice, stoppedLine } from './relay/text'
 import { usageBody } from './plan/usage'
 import type { UsageBody } from './plan/usage'
 import { agentFileEffort, agentFileModel, ownAgentFile, spawnGuard } from './plan/pacing-guard'
@@ -1904,6 +1904,50 @@ let outboxFailure: string | null = null
 let outboxRefusals = 0
 // the last sequence number given to a queued event: the order the server sent them in, which a put-back event goes back to (relay/outbox.ts)
 let outboxSeq = 0
+// the stall watch's look at the head of the outbox: since when it has been the head, and whether its delay was told
+let headWatch: HeadWatch | null = null
+
+// A host call of the outbox that did not answer in RELAY_CALL_MS: the awaited call may still settle later, and nothing waits on it any more.
+class HostCallTimeout extends Error {}
+
+// Every host call the outbox awaits while issuing or settling an event (state reads and writes, the clock, the model note, the dashboard) is bounded: a call that never
+// settled used to hold the head of the outbox for good (the pump's single flight, or the hold that only the end of a settle's awaits lifts), and nothing said so.
+async function hostCall<T>($: any, what: string, call: Promise<T>): Promise<T> {
+  let cancel = () => {}
+  const timedOut = new Promise<never>((_, reject) => {
+    const timer = $.clock.after(RELAY_CALL_MS, () => reject(new HostCallTimeout(`${what} did not answer in ${RELAY_CALL_MS / 1000} s`)))
+    cancel = () => timer.cancel()
+  })
+  try {
+    return await Promise.race([call, timedOut])
+  } finally {
+    cancel()
+  }
+}
+
+// One bookkeeping step after a refusal: bounded, and a failure of it (a timeout, a refused write) is shown and goes no further, so the held head is always released by the backoff.
+async function settleStep($: any, what: string, call: () => Promise<unknown>): Promise<void> {
+  try {
+    await hostCall($, what, call())
+  } catch (err: any) {
+    $.ui.toast(`Plan event delivery: ${err instanceof HostCallTimeout ? errMessage(err) : `${what} failed: ${errMessage(err)}`}`.slice(0, TOAST_ERROR_MAX))
+  }
+}
+
+// A head whose issue never got as far as the engine call failed on a host call that did not answer: it is held for the backoff like a refused one, with the call as the reason, and issued again.
+function holdTimedOutHead($: any, head: Queued, why: string): void {
+  head.held = true
+  head.why = why
+  head.heldAt = head.triedAt
+  outboxRefusals++
+  $.ui.toast(`Plan event delivery: ${why}`.slice(0, TOAST_ERROR_MAX))
+  detach($, 'Plan event delivery', releaseHeld($, head, backoffMs(outboxRefusals)))
+}
+
+async function releaseHeld($: any, held: Queued, waitMs: number): Promise<void> {
+  await $.clock.sleep(waitMs)
+  releaseHeldNow($, held)
+}
 
 async function queueEvents($: any, run: RelayRun, events: RelayEvent[]): Promise<void> {
   for (const event of events) outbox.push({ planId: run.planId, seq: ++outboxSeq, event, held: false })
@@ -1951,30 +1995,55 @@ async function issueOutbox($: any): Promise<void> {
       const next = outbox[0]
       // no live run on that plan: the events wait for a run that serves it (startRelay starts this again)
       if (next === undefined || next.held || relayRun === null || relayRun.planId !== next.planId) return
-      // a re-send of an event the session already holds, while its turn runs, is delivered in effect (its cursor moves, it leaves the outbox) but not issued again
-      // (a record that asks for no acknowledgement, the common case, reads nothing and awaits nothing extra)
-      const asks = next.event.acks.length > 0
-      const resend = asks && shouldDropResend(next.event.acks, await read($, ackInFlight), (await read($, turn)).isRunning)
-      if (resend) {
-        if (outbox.includes(next)) await markDelivered($, next)
-        continue
+      // the engine call of this event is made (the event is delivered): a host call that fails to answer after it is a toast, never a second issue of the event
+      let called = false
+      let outcome: Promise<string | null> | null = null
+      try {
+        next.triedAt = await hostCall($, 'reading the clock', Promise.resolve($.clock.now()))
+        // a re-send of an event the session already holds, while its turn runs, is delivered in effect (its cursor moves, it leaves the outbox) but not issued again
+        // (a record that asks for no acknowledgement, the common case, reads nothing and awaits nothing extra)
+        const asks = next.event.acks.length > 0
+        const resend = asks && shouldDropResend(next.event.acks, await hostCall($, 'reading the acknowledgements in flight', read($, ackInFlight)), (await hostCall($, 'reading the turn', read($, turn))).isRunning)
+        if (resend) {
+          if (outbox.includes(next)) await hostCall($, 'storing the delivered event', markDelivered($, next))
+          continue
+        }
+        // a queued job offered to this session: the plugin takes it and tells the model only once its worktree is ready (ready/offer.ts); the record's own text,
+        // which asks the model to take it, is never told. Delivered at once, so the take and the command never hold the events behind it
+        const offer = next.event.offer
+        if (offer !== null) {
+          // the take is what delivers it, and it goes ahead whatever the bookkeeping does: a second issue of the head would take the job twice
+          called = true
+          try {
+            await hostCall($, 'storing the delivered event', markDelivered($, next))
+          } finally {
+            detach($, 'Queued job', takeQueueJob($, offer, next.event.urgent))
+          }
+          continue
+        }
+        const issued = await hostCall($, 'reading the turn', issueEvent($, next.event.text, next.event.urgent))
+        called = true
+        // the outcome gets its rejection handler at once, before anything awaits (the in-flight record and the cursor store below), so a rejection is never unhandled
+        outcome = issued.done.catch((err: any) => notTakenLine(errMessage(err)))
+        if (asks) await hostCall($, 'recording the event in flight', update($, ackInFlight, cur => markInFlight(cur, next.event.acks)))
+        // a move to another plan dropped it while the call was made: it is no longer this module's to deliver
+        if (!outbox.includes(next)) continue
+        await hostCall($, 'storing the delivered event', markDelivered($, next))
+        detach($, 'Plan event delivery', settleOutbox($, next, outcome))
+      } catch (err: any) {
+        if (!(err instanceof HostCallTimeout)) throw err
+        if (!called) {
+          if (!outbox.includes(next)) continue
+          // nothing reached the engine: the head waits out the backoff and is issued again, and the pump is free (the events behind it wait their turn, in order)
+          holdTimedOutHead($, next, err.message)
+          return
+        }
+        // the engine has the event: it leaves the outbox here (the atom and the cursor catch up at the next write; a reload before then repeats it, as it does for a delivery cut short),
+        // and its outcome is still watched
+        if (outbox.includes(next)) outbox.splice(outbox.indexOf(next), 1)
+        $.ui.toast(`Plan event delivery: ${err.message}; the event was issued`.slice(0, TOAST_ERROR_MAX))
+        if (outcome !== null) detach($, 'Plan event delivery', settleOutbox($, next, outcome))
       }
-      // a queued job offered to this session: the plugin takes it and tells the model only once its worktree is ready (ready/offer.ts); the record's own text,
-      // which asks the model to take it, is never told. Delivered at once, so the take and the command never hold the events behind it
-      const offer = next.event.offer
-      if (offer !== null) {
-        await markDelivered($, next)
-        detach($, 'Queued job', takeQueueJob($, offer, next.event.urgent))
-        continue
-      }
-      const issued = await issueEvent($, next.event.text, next.event.urgent)
-      // the outcome gets its rejection handler at once, before anything awaits (the in-flight record and the cursor store below), so a rejection is never unhandled
-      const outcome = issued.done.catch((err: any) => notTakenLine(errMessage(err)))
-      if (asks) await update($, ackInFlight, cur => markInFlight(cur, next.event.acks))
-      // a move to another plan dropped it while the call was made: it is no longer this module's to deliver
-      if (!outbox.includes(next)) continue
-      await markDelivered($, next)
-      detach($, 'Plan event delivery', settleOutbox($, next, outcome))
     }
   } catch (err: any) {
     // the cursor store failing is the loop's own kind of error (an unexpected one): the relay stops for the plan, never restarted behind the person's back
@@ -2026,22 +2095,55 @@ async function settleOutbox($: any, event: Queued, outcome: Promise<string | nul
   if (relayRun !== null && relayRun.planId !== event.planId) return
   outboxFailure = failure
   outboxRefusals++
-  // the refused event never reached the session, so it is not an event the session holds
-  if (event.event.acks.length > 0) await update($, ackInFlight, cur => clearInFlight(cur, event.event.acks.map(a => a.eventId)))
-  const held: Queued = { ...event, again: true, held: true }
+  // the refused event goes back, held, with its reason, before anything is awaited: from here the backoff alone lifts the hold (every step below is bounded and a
+  // failure of one is shown and goes no further, so none can leave the head held, as an await that never returned or threw once did)
+  const held: Queued = { ...event, again: true, held: true, why: failure, heldAt: undefined }
   putBack(outbox, held)
-  await persistOutbox($)
+  const backoff = $.clock.sleep(backoffMs(outboxRefusals))
+  await settleStep($, 'reading the clock', async () => void (held.heldAt = await $.clock.now()))
+  // the refused event never reached the session, so it is not an event the session holds
+  if (event.event.acks.length > 0) await settleStep($, 'clearing the acknowledgements in flight', () => update($, ackInFlight, cur => clearInFlight(cur, event.event.acks.map(a => a.eventId))))
+  await settleStep($, 'storing the outbox', () => persistOutbox($))
   // a Stop holds every plugin prompt until the person sends a message: shown to the person once (toast and band), never told to the model, which
   // reads nothing until then and would get each repeat at once when it resumes
-  if (live !== null && heldForInput(failure)) await setRelay($, live, 'held', HELD_FOR_INPUT_NOTICE)
-  else if (live !== null) await relayFailed($, live, 'retrying', failure, delayedLine(failure))
+  if (live !== null && heldForInput(failure)) await settleStep($, 'showing the held events', () => setRelay($, live, 'held', HELD_FOR_INPUT_NOTICE))
+  else if (live !== null) await settleStep($, 'telling the session the events are delayed', () => relayFailed($, live, 'retrying', failure, delayedLine(failure)))
   // a session held by a person's Stop can take no work, so it must not wait on the list
-  if (heldForInput(failure) && (await read($, readyLoop)) !== null) await leaveReady($, READY_STOPPED)
-  await $.clock.sleep(backoffMs(outboxRefusals))
-  // a move to another plan dropped it while it waited
+  if (heldForInput(failure)) await settleStep($, 'taking the session off the ready list', async () => {
+    if ((await read($, readyLoop)) !== null) await leaveReady($, READY_STOPPED)
+  })
+  await backoff
+  releaseHeldNow($, held)
+}
+
+// The hold of a put-back event ends: it is issued again (a move to another plan dropped it while it waited, then nothing is left to issue).
+function releaseHeldNow($: any, held: Queued): void {
   if (!outbox.includes(held)) return
   held.held = false
   detach($, 'Plan event delivery', issueOutbox($))
+}
+
+// The head of the outbox, looked at by the stall watch's tick: a hold past its backoff is lifted, and a head undelivered for OUTBOX_DELAY_MS is told to the person and
+// the session once, with how long it waited, what it waits on (the refusal, or the host call that timed out) and when it was last tried. Synchronous and detached from every host
+// call, so no stuck call can stop it. A tick that is the machine waking counts nothing (the wall clock moved while no timer did).
+function checkOutboxHead($: any, run: RelayRun | null, now: number, woke: boolean): void {
+  const head = outbox[0]
+  if (run === null || woke || head === undefined || head.planId !== run.planId) {
+    headWatch = null
+    return
+  }
+  headWatch = watchHead(headWatch, head, now)
+  if (headWatch === null) return
+  if (holdOverran(head, now, OUTBOX_HELD_MAX_MS)) {
+    $.ui.toast(`Plan event delivery: the wait before trying the oldest event again never ended; trying it now`.slice(0, TOAST_ERROR_MAX))
+    releaseHeldNow($, head)
+  }
+  const delay = headDelay(headWatch, head, now, OUTBOX_DELAY_MS)
+  if (delay === null) return
+  headWatch = { ...headWatch, told: true }
+  $.ui.toast(`Plan ${headDelayedNotice(delay.waitedSeconds, delay.why, delay.triedAgoSeconds)}`.slice(0, TOAST_ERROR_MAX))
+  // a session a Stop holds reads nothing until the person types: the band and the toast tell them (settleOutbox), the model gets no note
+  if (!heldForInput(delay.why)) detach($, 'Telling the session', tellModel($, headDelayedLine(delay.waitedSeconds, delay.why, delay.triedAgoSeconds)))
 }
 
 // the stall watch, every RELAY_STALL_CHECK_MS. A loop that has made no step for RELAY_STALL_MS is awaiting a call that never settles (the poll,
@@ -2054,6 +2156,7 @@ async function checkRelayStall($: any): Promise<void> {
   // interval is the machine waking, and judging it would report a stall nobody had. The watch starts counting again from here.
   const woke = isLateTick(now, stallTickAt, RELAY_STALL_CHECK_MS)
   stallTickAt = now
+  checkOutboxHead($, run, now, woke)
   if (run === null) {
     stallSeen = null
     return
