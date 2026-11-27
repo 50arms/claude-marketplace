@@ -146,7 +146,7 @@ const measuredAt = atom({ plugin: '50arms', key: 'measuredAt' } as const, null a
 const relay = atom({ plugin: '50arms', key: 'relay' } as const, RELAY_OFF as RelayState)
 // the session's place in the ready-agent loop. $.state, so a module reload keeps it; a new process starts without, and takes the loop up again from the mark or the dashboard loop its row still holds (adoptReadyMark).
 const readyLoop = atom({ plugin: '50arms', key: 'readyLoop' } as const, null as ReadyLoop | null)
-// CP-175: each stopping sub-agent's refusals in a row (reports/bg-wait-guard.ts), per `<session>-<agent>`; an entry goes once its stop goes through. $.state, so a module reload keeps the count.
+// Each stopping sub-agent's refusals in a row (reports/bg-wait-guard.ts), per `<session>-<agent>`; an entry goes once its stop goes through. $.state, so a module reload keeps the count.
 const bgWaitCounts = atom({ plugin: '50arms', key: 'bgWaitCounts' } as const, {} as BgWaitCounts)
 const readyShells = atom({ plugin: '50arms', key: 'readyShells' } as const, [] as string[])
 // the events warning last stored (null: none), so its reason is told once on the transition into it.
@@ -4117,7 +4117,7 @@ async function endBrief($: any, agentId: string) {
   await update($, agentBriefs, cur => briefEnded(cur, agentId))
 }
 
-// CP-175: the background-wait guard's one-toast-per-reason memory: the same fault (a missing transcript path, an unreadable file) is told once, not at every sub-agent stop.
+// The background-wait guard's one-toast-per-reason memory: the same fault (a missing transcript path, an unreadable file) is told once, not at every sub-agent stop.
 let bgWaitFaultTold: string | null = null
 const bgWaitFault = ($: any, reason: string) => {
   if (bgWaitFaultTold === reason) return

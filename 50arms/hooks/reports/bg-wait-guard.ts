@@ -1,5 +1,5 @@
-// CP-175: the SubagentStop guard that refuses a sub-agent ending its turn while background work it started has no result yet. Ported from danxbot's
-// `subagent-bg-wait-guard.mjs` and `background-bash-runs.mjs` (DX-3087, DX-3108, DX-3756, DX-8126), which stay there until DX-8306 removes them.
+// The SubagentStop guard that refuses a sub-agent ending its turn while background work it started has no result yet. Ported from the
+// `subagent-bg-wait-guard` and `background-bash-runs` hook scripts of the 50 Arms service repo.
 // Pure over the sub-agent's own transcript lines: register.tsx reads the file (`agent_transcript_path`), asks which moved-run output files exist and when they were
 // written, and turns a verdict into the stop's `block` or a toast.
 //
@@ -73,7 +73,7 @@ function noticesIn(line: Line): string[] {
   return text.split('<task-notification>').slice(1)
 }
 
-/** A line is the stopping agent's own work unless it is a root-session line or tagged for another sidechain (DX-3108). Untagged lines count. */
+/** A line is the stopping agent's own work unless it is a root-session line or tagged for another sidechain. Untagged lines count. */
 export function belongsToAgent(line: Line, agentId: string): boolean {
   if (line.isSidechain === false) return false
   if (typeof line.agentId === 'string' && line.agentId !== agentId) return false
@@ -220,7 +220,7 @@ export function findUnconsumedSpawns(lines: Line[], texts: readonly string[], ag
     if (confirmedAt === -1) continue
     const identifiers = extractIdentifiers(confirmation)
     if (identifiers.length === 0) continue
-    // consumption search is deliberately NOT scoped to the agent (DX-3108): scoping detection removes false blocks, scoping this would add them
+    // consumption search is deliberately NOT scoped to the agent: scoping detection removes false blocks, scoping this would add them
     let consumed = false
     for (let i = confirmedAt + 1; i < lines.length && !consumed; i++) {
       if (lines[i].type !== 'user' && lines[i].type !== 'assistant') continue
