@@ -101,6 +101,7 @@ import { bugEvidenceGuard } from './plan/bug-evidence-guard'
 import { pacingLevel, pacingLine, refreshPacing, resetPacing, slotWaiting, withLine } from './plan/pacing-line'
 import { TURN_ACTIVITY_PATH, afterCompaction, nextSince, turnActivityBody } from './reports/turn-activity'
 import type { TurnActivity } from './reports/turn-activity'
+import { bgWaitRefusal, movedOutputPaths, parseTranscript } from './reports/bg-wait-guard'
 import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShells, shellRow } from './reports/activity'
 import { subagentKey } from './compaction/subagent-key'
 import type { ActivityChange } from './reports/activity'
@@ -4111,7 +4112,31 @@ async function endBrief($: any, agentId: string) {
   await update($, agentBriefs, cur => briefEnded(cur, agentId))
 }
 
+// CP-175: refusals of a stopping sub-agent in a row (reports/bg-wait-guard.ts), a module variable: a reload starts the count again.
+const bgWaitRefusals = new Map<string, { n: number; calls: number }>()
+
+// The refusal text for a sub-agent that ends its turn with background work it started still unresolved, or null to let the stop through. The guard reads the sub-agent's OWN transcript
+// (`agent_transcript_path`; the event's `transcript_path` is the main session's). A transcript that cannot be read is one toast and the stop goes on, never a block on a guess.
+async function bgWaitRefusalOf($: any, e: any): Promise<string | null> {
+  if (typeof e.agent_id !== 'string' || e.agent_id === '') return null
+  const path = e.agent_transcript_path
+  if (typeof path !== 'string' || path === '') return null
+  try {
+    if (!(await $.fs.exists(path))) return null
+    const lines = parseTranscript(String(await $.fs.read(path)))
+    const existing = new Set<string>()
+    for (const out of movedOutputPaths(lines)) if (await $.fs.exists(out)) existing.add(out)
+    return bgWaitRefusal({ lines, agentId: e.agent_id, sessionId: String(e.session_id ?? ''), stopHookActive: e.stop_hook_active === true, existing, refusals: bgWaitRefusals })
+  } catch (err: any) {
+    $.ui.toast(`50 Arms sub-agent background-wait check failed: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}`)
+    return null
+  }
+}
+
 async function onSubagentStop($: any, e: any, next: any) {
+  // a refused stop is no stop: the sub-agent goes on, so none of the bookkeeping below happens
+  const refusal = await bgWaitRefusalOf($, e)
+  if (refusal !== null) return { block: refusal }
   await noteRunningAgent($, e.agent_id, false)
   const id = typeof e.agent_id === 'string' && e.agent_id !== '' ? e.agent_id : null
   const agent = id === null ? undefined : (await read($, spawnedAgents))[id]
