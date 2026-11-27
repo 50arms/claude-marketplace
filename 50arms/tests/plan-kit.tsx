@@ -618,6 +618,8 @@ export function dashboard(
     context: {} as { tokens?: number; window?: number },
     // DX-4993: files on the fixture's disk by path (the compaction control the relay writes), as `$.fs.exists` / `$.fs.read` see them
     files: {} as Record<string, string>,
+    // CP-175: a file's modification time (epoch ms) as `$.fs.stat` answers it; a file with none answers 0
+    fileTimes: {} as Record<string, number>,
     // DX-4993: what `git status --porcelain=v1 -b` prints in the session's directory (the resume briefing), or its exit code when it fails
     gitStatus: { exitCode: 0, stdout: '## main...origin/main\n' } as { exitCode: number; stdout: string },
     // What a `$.process.run` answers by its program (argv[0], for example `df` or `cmd.exe`); a program with no entry answers the git status above
@@ -1663,6 +1665,12 @@ export function dashboard(
     // CP-146: the plugin names its own version from its manifest (`<plugin root>/.claude-plugin/plugin.json`), whatever the root is
     if (path.endsWith('/.claude-plugin/plugin.json')) return { value: JSON.stringify({ name: '50arms', version: world.pluginVersion }) } as any
     return (path in world.files ? { value: world.files[path] } : { deny: `ENOENT: no such file ${path}` }) as any
+  })
+  // CP-175: a file of the fixture's disk, with its modification time; a path with no file is ENOENT
+  on('fs.stat', (_$: any, e: any) => {
+    const path = fsKey(e.path)
+    if (!(path in world.files)) return { deny: `ENOENT: no such file ${path}` } as any
+    return { value: { kind: 'file', size: world.files[path].length, mtimeMs: world.fileTimes[path] ?? 0, isLink: false } } as any
   })
   // a directory listing from the fixture's disk: the first path segment under it of every file held there. An entry is a dir when something lies deeper or its text is empty
   on('fs.list', (_$: any, e: any) => {
