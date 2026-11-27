@@ -101,7 +101,8 @@ import { bugEvidenceGuard } from './plan/bug-evidence-guard'
 import { pacingLevel, pacingLine, refreshPacing, resetPacing, slotWaiting, withLine } from './plan/pacing-line'
 import { TURN_ACTIVITY_PATH, afterCompaction, nextSince, turnActivityBody } from './reports/turn-activity'
 import type { TurnActivity } from './reports/turn-activity'
-import { bgWaitRefusal, movedOutputPaths, parseTranscript } from './reports/bg-wait-guard'
+import { bgWaitVerdict, leftBehindLine, movedOutputPaths, parseTranscript } from './reports/bg-wait-guard'
+import type { Counts as BgWaitCounts, Verdict } from './reports/bg-wait-guard'
 import { ACTIVITY_PATH, LEAVE_CLOSE_DEADLINE_MS, LIVENESS_MS, agentRow, endedShells, shellRow } from './reports/activity'
 import { subagentKey } from './compaction/subagent-key'
 import type { ActivityChange } from './reports/activity'
@@ -145,6 +146,8 @@ const measuredAt = atom({ plugin: '50arms', key: 'measuredAt' } as const, null a
 const relay = atom({ plugin: '50arms', key: 'relay' } as const, RELAY_OFF as RelayState)
 // the session's place in the ready-agent loop. $.state, so a module reload keeps it; a new process starts without, and takes the loop up again from the mark or the dashboard loop its row still holds (adoptReadyMark).
 const readyLoop = atom({ plugin: '50arms', key: 'readyLoop' } as const, null as ReadyLoop | null)
+// CP-175: each stopping sub-agent's refusals in a row (reports/bg-wait-guard.ts), per `<session>-<agent>`; an entry goes once its stop goes through. $.state, so a module reload keeps the count.
+const bgWaitCounts = atom({ plugin: '50arms', key: 'bgWaitCounts' } as const, {} as BgWaitCounts)
 const readyShells = atom({ plugin: '50arms', key: 'readyShells' } as const, [] as string[])
 // the events warning last stored (null: none), so its reason is told once on the transition into it.
 const eventsWarned = atom({ plugin: '50arms', key: 'eventsWarned' } as const, null as string | null)
@@ -269,6 +272,7 @@ async function carryAcrossConversation($: any): Promise<void> {
     relay: read($, relay),
     readyLoop: read($, readyLoop),
     readyShells: read($, readyShells),
+    bgWaitCounts: read($, bgWaitCounts),
     eventsWarned: read($, eventsWarned),
     turnReportedAt: read($, turnReportedAt),
     mcpIds: read($, mcpIds),
@@ -333,6 +337,7 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, relay, () => carried.relay),
     update($, readyLoop, () => carried.readyLoop),
     update($, readyShells, () => carried.readyShells),
+    update($, bgWaitCounts, () => carried.bgWaitCounts),
     update($, eventsWarned, () => carried.eventsWarned),
     update($, turnReportedAt, () => carried.turnReportedAt),
     update($, mcpIds, () => carried.mcpIds),
@@ -4112,31 +4117,50 @@ async function endBrief($: any, agentId: string) {
   await update($, agentBriefs, cur => briefEnded(cur, agentId))
 }
 
-// CP-175: refusals of a stopping sub-agent in a row (reports/bg-wait-guard.ts), a module variable: a reload starts the count again.
-const bgWaitRefusals = new Map<string, { n: number; calls: number }>()
+// CP-175: the background-wait guard's one-toast-per-reason memory: the same fault (a missing transcript path, an unreadable file) is told once, not at every sub-agent stop.
+let bgWaitFaultTold: string | null = null
+const bgWaitFault = ($: any, reason: string) => {
+  if (bgWaitFaultTold === reason) return
+  bgWaitFaultTold = reason
+  $.ui.toast(`50 Arms sub-agent background-wait check skipped: ${reason}`)
+}
 
-// The refusal text for a sub-agent that ends its turn with background work it started still unresolved, or null to let the stop through. The guard reads the sub-agent's OWN transcript
-// (`agent_transcript_path`; the event's `transcript_path` is the main session's). A transcript that cannot be read is one toast and the stop goes on, never a block on a guess.
-async function bgWaitRefusalOf($: any, e: any): Promise<string | null> {
-  if (typeof e.agent_id !== 'string' || e.agent_id === '') return null
+// What a stopping sub-agent's own transcript says about the background work it started (reports/bg-wait-guard.ts), or null when the check could not be made. It reads the sub-agent's OWN
+// transcript (`agent_transcript_path`; the event's `transcript_path` is the main session's and holds none of its lines, so there is never a fallback to it). A missing path, a missing or
+// unreadable file is one toast and the stop goes on, never a block on a guess. A moved run's output file counts only when it exists and was written at or after the Bash call (`$.fs.list`'s mtimeMs).
+async function bgWaitVerdictOf($: any, e: any): Promise<Verdict | null> {
   const path = e.agent_transcript_path
-  if (typeof path !== 'string' || path === '') return null
+  if (typeof path !== 'string' || path === '') return bgWaitFault($, 'the SubagentStop event has no agent_transcript_path'), null
   try {
-    if (!(await $.fs.exists(path))) return null
-    const lines = parseTranscript(String(await $.fs.read(path)))
-    const existing = new Set<string>()
-    for (const out of movedOutputPaths(lines)) if (await $.fs.exists(out)) existing.add(out)
-    return bgWaitRefusal({ lines, agentId: e.agent_id, sessionId: String(e.session_id ?? ''), stopHookActive: e.stop_hook_active === true, existing, refusals: bgWaitRefusals })
+    if (!(await $.fs.exists(path))) return bgWaitFault($, `agent_transcript_path does not exist: ${path}`), null
+    const { lines, texts } = parseTranscript(String(await $.fs.read(path)))
+    const existing = new Map<string, number>()
+    for (const out of movedOutputPaths(lines)) {
+      const slash = Math.max(out.lastIndexOf('/'), out.lastIndexOf('\\'))
+      // a folder that cannot be listed (a quote naming a path this host never had) is a file this host does not have
+      const entries = await $.fs.list(out.slice(0, slash)).catch(() => [])
+      const entry = entries.find((f: any) => f.name === out.slice(slash + 1))
+      if (entry !== undefined) existing.set(out, entry.mtimeMs)
+    }
+    let verdict: Verdict = { kind: 'pass' }
+    await update($, bgWaitCounts, cur => {
+      const decided = bgWaitVerdict({ lines, texts, agentId: e.agent_id, sessionId: String(e.session_id ?? ''), stopHookActive: e.stop_hook_active === true, existing, counts: cur })
+      verdict = decided.verdict
+      return decided.counts
+    })
+    return verdict
   } catch (err: any) {
-    $.ui.toast(`50 Arms sub-agent background-wait check failed: ${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)}`)
+    bgWaitFault($, `reading the transcript failed (${String(err?.message ?? err).slice(0, CALL_ERROR_MAX)})`)
     return null
   }
 }
 
 async function onSubagentStop($: any, e: any, next: any) {
-  // a refused stop is no stop: the sub-agent goes on, so none of the bookkeeping below happens
-  const refusal = await bgWaitRefusalOf($, e)
-  if (refusal !== null) return { block: refusal }
+  // a refused stop is no stop: the sub-agent goes on, so none of the bookkeeping below happens. The refusal follows the other Stop blocks (the chain runs, then the block is merged in)
+  const verdict = typeof e.agent_id === 'string' && e.agent_id !== '' ? await bgWaitVerdictOf($, e) : null
+  if (verdict?.kind === 'refuse') return { ...(await next(e)), block: verdict.reason }
+  // the third refusal in a row was spent: the stop goes through, and the person is told which run is left behind
+  if (verdict?.kind === 'left_behind') $.ui.toast(leftBehindLine(verdict.runs))
   await noteRunningAgent($, e.agent_id, false)
   const id = typeof e.agent_id === 'string' && e.agent_id !== '' ? e.agent_id : null
   const agent = id === null ? undefined : (await read($, spawnedAgents))[id]

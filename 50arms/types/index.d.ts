@@ -303,6 +303,8 @@ declare module 'claude-code' {
       readyLoop: ReadyLoop | null
       // the background shells the session started and the engine still lists as running: the ready loop's clear waits for them
       readyShells: string[]
+      // CP-175: each stopping sub-agent's refusals in a row by the background-wait guard (see Counts in hooks/reports/bg-wait-guard.ts), per `<session>-<agent>`.
+      bgWaitCounts: Record<string, { n: number; calls: number }>
       // the last time stamp handed to the model (see StampState): the next one counts its +delta and its date from it.
       lastStamp: StampState
       // the sub-agents that finished and whose finish the main session has not been told yet: it rides the main loop's next tool result or prompt, one text however many finished.
