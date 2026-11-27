@@ -131,6 +131,7 @@ function truncate(title: string): string {
 
 // The block reason for `cards` (at least one): the first few named, the rest counted, and the one instruction.
 // Refusal (section 565 "Refusals" of the event-system plan): a Stop block that refuses a stop while ready cards wait (the card procedure's "Delivery" and plan-workflow "Scope"); the check decides it, so it stays code.
+// The seeded behavior policy that states this check is `profile.orchestrator.pausing.5` (its rule `profile.orchestrator.pausing.5.rule`: never pause while an unclaimed ready card exists).
 export function blockReason(cards: readonly ReadyCard[]): string {
   const listed = cards.slice(0, MAX_LISTED_CARDS).map(c => `${c.id} ${truncate(c.title)}`)
   const more = cards.length > listed.length ? `, and ${cards.length - listed.length} more` : ''
