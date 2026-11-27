@@ -8,7 +8,7 @@ import { sha256Hex } from './bundle/sha256'
 import { BUNDLE_PATH, BUNDLE_POLL_MS, BundleShapeError, FLOOR_PATH, REPORTS_PATH, REQUESTED_ENDPOINTS_PATH, ROLE_PATH, bundleFileOf, bundleQuery, changeSignalOf, decide, deliveredText, entriesOf, floorIsStale, isCurrent, mainContext, namedSlots, readBundleBody, readRequestedEndpointsBody, readRoleBody, relayStreams, requestedEndpointsQuery, rewindTold, roleQuery, startsNewContext } from './bundle/bundle'
 import type { Bundle, BundleComputed, BundleFile, BundleRead, ChangeSignal, Decision, Delivery, Entry, Told } from './bundle/bundle'
 import { SIGN_IN_INVITATION, floorBody } from './bundle/floor'
-import { CONNECTORS_SERVER, OWED_ARRIVED, RECONNECT_TOOL, reconnectsStaleMcp, staleMcpNextStep, type ReconnectResult, dropRetell, failureOf as fetchFailureOf, holdOn, holdReport, leavesQueue, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from './bundle/hold'
+import { OWED_ARRIVED, dropRetell, failureOf as fetchFailureOf, holdOn, holdReport, leavesQueue, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from './bundle/hold'
 import type { Failure, Hold, Retell } from './bundle/hold'
 import { dueRequests, deliveryItem, enqueueDelivery, enqueueFloor, enqueueHold, failureLine, bandLine, hasFloorPending, settleFailure, settleOk, toTell } from './bundle/reports'
 import type { Loud } from './bundle/reports'
@@ -3633,7 +3633,7 @@ async function onToolStamp($: any, e: any, next: any) {
   const budget = await hookBudget($)
   // a held agent context runs no tool but `session_connect`, which lets the person sign in again; the plugin's own calls are never held
   if (!raisedByPlugin(next.origin) && e.tool !== toolName('session_connect')) {
-    const refusal = await refuseWhileHeld($, e.agentId, budget, { tool: String(e.tool), server: e.server })
+    const refusal = await refuseWhileHeld($, e.agentId, budget)
     if (refusal !== null) return { deny: refusal }
   }
   const r = await next(e)
@@ -3907,10 +3907,9 @@ const joined = (lines: (string | null)[]): string | null => lines.filter((l): l 
 // A start the plugin could not read for: the context is held with the failure, the start is owed, and the line told is the loading line (never nothing).
 async function owedStart($: any, event: string, asked: Failure): Promise<string> {
   const at = await $.clock.now()
-  const failure = asked.reason === 'stale_mcp' ? staleFailure(asked, await reconnectAsk($), mainContext) : asked
   let hold!: Hold
   await update($, behavior, cur => {
-    const holds = holdOn(cur.holds, mainContext, failure, event, at)
+    const holds = holdOn(cur.holds, mainContext, asked, event, at)
     hold = holds[mainContext] as Hold
     return { ...cur, holds, owed: owe(cur.owed, mainContext, event) }
   })
@@ -5445,12 +5444,7 @@ async function retryTick($: any): Promise<void> {
   if (!holds.some(h => phaseOf(h, now) === 'loading')) return
   const outcome = await fetchBundle($)
   // a failure during the window is kept as the newest reason of every hold
-  if (outcome.kind === 'failed') {
-    // a stale-MCP failure keeps (or, once, takes) the reconnect answer each hold's line is worded from
-    const ask = outcome.failure.reason === 'stale_mcp' ? await reconnectAsk($) : null
-    const failureFor = (k: string): Failure => (ask === null ? outcome.failure : staleFailure(outcome.failure, ask, k))
-    await update($, behavior, cur => ({ ...cur, holds: Object.fromEntries(Object.entries(cur.holds).map(([k, h]) => [k, holdOn({ [k]: h }, k, failureFor(k), h.event, now)[k] as Hold])) }))
-  }
+  if (outcome.kind === 'failed') await update($, behavior, cur => ({ ...cur, holds: Object.fromEntries(Object.entries(cur.holds).map(([k, h]) => [k, holdOn({ [k]: h }, k, outcome.failure, h.event, now)[k] as Hold])) }))
   keepRetrying($)
 }
 
@@ -5511,47 +5505,8 @@ async function ensureBundle($: any, key: string, event: string, waitMs: number, 
   return holdContext($, key, event, outcome.failure)
 }
 
-// the reconnect of a stale MCP server is a fixed call, so the hook makes it, once per stale-MCP hold: a context whose session already holds one for this reason reuses its answer. The answer
-// (`ask`) and the line's next step for this context (the main conversation or a sub-agent) are kept on the hold, so every refusal tells the same thing.
-async function reconnectAsk($: any): Promise<ReconnectResult> {
-  const standing = Object.values((await read($, behavior)).holds).find(h => h.reason === 'stale_mcp')
-  if (standing?.values.ask === 'requested') return { ask: 'requested' }
-  if (standing?.values.ask === 'unavailable') return { ask: 'unavailable', why: standing.values.why ?? 'no reason kept' }
-  return requestReconnect($)
-}
-
-// The hold's failure with the stale-MCP wording every writer of such a hold passes through: the line's next step for this context, and, when the reconnect could not be asked, why (kept on the hold's detail, so the line and a later look both have it).
-const staleFailure = (failure: Failure, result: ReconnectResult, key: string): Failure => ({
-  ...failure,
-  detail: result.ask === 'unavailable' ? `${failure.detail}; the reconnect could not be asked: ${result.why}` : failure.detail,
-  values: { ask: result.ask, ...(result.ask === 'unavailable' ? { why: result.why } : {}), next_step: staleMcpNextStep(result.ask, key !== MAIN_KEY) },
-})
-
-// What the hook asks of the desktop app: its reconnect of the plugin's own server (no verdict yet on whether that starts the newest installed MCP, so nothing here relies on it). A session with no `ccd_connectors` server
-// (a dispatched agent, a command-line session) or a refused call is `unavailable`, with the reason it gave: the line then names the restart alone.
-async function requestReconnect($: any): Promise<ReconnectResult> {
-  try {
-    const answer = await $.mcp.call(CONNECTORS_SERVER, RECONNECT_TOOL, { server: SERVER })
-    return answer?.isError === true ? { ask: 'unavailable', why: oneLineOf(mcpText(answer)) } : { ask: 'requested' }
-  } catch (err: any) {
-    return { ask: 'unavailable', why: oneLineOf(errMessage(err)) }
-  }
-}
-
-const oneLineOf = (text: string): string => text.replace(/\s+/g, ' ').trim().slice(0, CALL_ERROR_MAX)
-
 // An agent context with no current bundle: held with the failure (a new hold, or the standing one refreshed), kept asking for, and its report opened once the hold line starts.
 async function holdContext($: any, key: string, event: string, failure: Failure, undelivered = false, retell: Retell | null = null): Promise<{ kind: 'held'; hold: Hold }> {
-  // the contexts of one hook are held together: the first stale-MCP hold must be stored before the next reads whether one stands
-  if (failure.reason !== 'stale_mcp') return placeHold($, key, event, failure, undelivered, retell)
-  const run = staleHoldChain.then(async () => placeHold($, key, event, staleFailure(failure, await reconnectAsk($), key), undelivered, retell))
-  staleHoldChain = run.then(() => undefined, () => undefined)
-  return run
-}
-
-let staleHoldChain: Promise<void> = Promise.resolve()
-
-async function placeHold($: any, key: string, event: string, failure: Failure, undelivered: boolean, retell: Retell | null): Promise<{ kind: 'held'; hold: Hold }> {
   const at = await $.clock.now()
   let hold!: Hold
   await update($, behavior, cur => {
@@ -5774,11 +5729,11 @@ const textsOrRefusal = (outcome: EventOutcome): string[] => (outcome.kind === 'r
 
 // A tool call of a held context is refused with the loading or the hold line, and a context whose owed start texts just arrived reads them as the refusal of its next call (so it reads them, then retries the step).
 // That refusal tells the owed events, and the events whose delivery failed and that no start owes (the hold's `retell`), one at a time with the moment they failed on; the tool event's own texts are told with the result of the call that runs.
-async function refuseWhileHeld($: any, agentId: unknown, budget: Budget, call: { tool: string; server: unknown }): Promise<string | null> {
+async function refuseWhileHeld($: any, agentId: unknown, budget: Budget): Promise<string | null> {
   if (!(await signedInWithAgent($))) return null
   const key = agentKeyOf(agentId)
   const ensured = await ensureBundle($, key, 'tool.before', BUNDLE_WAIT_MS, budget)
-  if (ensured.kind === 'held') return reconnectsStaleMcp(ensured.hold, call.tool, call.server) ? null : refusalOf(ensured.hold, await $.clock.now())
+  if (ensured.kind === 'held') return refusalOf(ensured.hold, await $.clock.now())
   if (ensured.kind !== 'ready') return null
   const told: string[] = []
   // a text already told on this call is counted told and reported delivered, so a later failure answers with it and the hold line together, never the hold line alone
