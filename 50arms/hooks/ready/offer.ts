@@ -62,36 +62,47 @@ export const commandFailed = (argv: readonly string[], message: string) => `the 
 
 // The longest the repo's worktree command may run: the engine's own limit for one process
 export const WORKTREE_COMMAND_TIMEOUT_MS = 600_000
-// A reloaded plugin does not end the old module's work: the old module's in-flight claim, command and prompt go on. Its job in hand is its mark's, and every step of it rewrites the mark (`at`) before a wait
-// of at most the command's limit, so an owner that has not touched its mark for this long is gone.
+// A reloaded plugin does not end the old module's work, in the same process: the old module's in-flight claim, command and prompt go on. Its job in hand is its mark's, and an owner in this process is alive. An owner in
+// another process (the session was restarted) is gone, but a mark's age says so only after the longest a step can take: every step rewrites the mark (`at`) before a wait of at most the command's limit.
 export const OWNER_SILENT_MS = WORKTREE_COMMAND_TIMEOUT_MS + 60_000
 
-// The job a module has in hand, kept in `$.state` from before its claim until the model is told it or it is left. `owner` is the instance id the module that wrote it minted when it loaded, `at` the time of
-// its last write. `prepared` is the worktree once the repo's command made it (a module that carries the job on claims it again, which answers the holder the job once more, and does not run the command again),
-// `urgent` how the model's prompt is issued.
+// The job a module has in hand, kept in `$.state` from before its claim until the model is told it or it is left. `owner` is the instance id the module that wrote it minted when it loaded, `process` the token of the process it
+// runs in, `at` the time of its last write. `prepared` is the worktree once the repo's command made it (a module that carries the job on claims it again, which answers the holder the job once more, and does not run the
+// command again), `urgent` how the model's prompt is issued.
 export type Prepared = { path: string; worktree: Worktree }
-export type TakingJob = { item_id: number; urgent: boolean; prepared: Prepared | null; owner: string; at: number }
+export type TakingJob = { item_id: number; urgent: boolean; prepared: Prepared | null; owner: string; process: string; at: number }
 // what a module has in hand before it writes the mark
 export type Hand = Pick<TakingJob, 'item_id' | 'urgent' | 'prepared'>
 
 // The mark a module wrote, or null when it is not one this module writes: a mark of another shape belongs to an older plugin's module, which may still be working the job
 export function takingJobOf(x: any): TakingJob | null {
-  if (x === null || typeof x !== 'object' || !isId(x.item_id) || typeof x.urgent !== 'boolean' || !isText(x.owner) || typeof x.at !== 'number') return null
+  if (x === null || typeof x !== 'object' || !isId(x.item_id) || typeof x.urgent !== 'boolean' || !isText(x.owner) || !isText(x.process) || typeof x.at !== 'number') return null
   const p = x.prepared
   if (p !== null && (typeof p !== 'object' || !isText(p.path) || !isText(p.worktree?.branch) || !isText(p.worktree?.commit))) return null
-  return { item_id: x.item_id, urgent: x.urgent, prepared: p, owner: x.owner, at: x.at }
+  return { item_id: x.item_id, urgent: x.urgent, prepared: p, owner: x.owner, process: x.process, at: x.at }
 }
 
-// How long `owner`'s module has to wait before it may act on the mark `job`: nothing for its own mark, else until the mark's owner has been silent for OWNER_SILENT_MS (0 once it has)
-export const ownerWaitMs = (job: TakingJob, owner: string, now: number): number => (job.owner === owner ? 0 : Math.max(0, job.at + OWNER_SILENT_MS - now))
+// How long the module instance `owner` (in process `process`) has to wait before it may act on the mark `job`: nothing for its own mark; never (Infinity) for another instance of this process, which is running; for an owner
+// of another process, until it has been silent for OWNER_SILENT_MS (0 once it has).
+export function ownerWaitMs(job: TakingJob, owner: string, process: string, now: number): number {
+  if (job.owner === owner) return 0
+  if (job.process === process) return Infinity
+  return Math.max(0, job.at + OWNER_SILENT_MS - now)
+}
 
-// Whether the module `owner` may write its job in hand over the mark `cur`: over none, over its own and over one of another shape (never read, so never kept from a new job). A mark another instance wrote
-// stands in the way, or is the blocker the answer names, unless `takingOver` (the module carries that job on) and its owner has been silent long enough.
-export function markWritable(cur: unknown, owner: string, now: number, takingOver: boolean): { ok: true } | { ok: false; by: TakingJob } {
+// Whether the module `owner` may write its job in hand, `itemId`, over the mark `cur`: over none, and over one of another shape (never read, so never kept from a new job). Its own mark of another job stands in the way (that job's
+// claim is unanswered, or it is in hand) and so does a mark another instance wrote, which is the blocker the answer names, unless `takingOver` (the module carries that job on) and its owner is gone (`ownerWaitMs` is 0).
+export function markWritable(cur: unknown, owner: string, process: string, itemId: number, now: number, takingOver: boolean): { ok: true } | { ok: false; by: TakingJob } {
   const job = takingJobOf(cur)
-  if (job === null || job.owner === owner) return { ok: true }
-  return takingOver && ownerWaitMs(job, owner, now) === 0 ? { ok: true } : { ok: false, by: job }
+  if (job === null) return { ok: true }
+  if (job.owner === owner) return job.item_id === itemId ? { ok: true } : { ok: false, by: job }
+  return takingOver && ownerWaitMs(job, owner, process, now) === 0 ? { ok: true } : { ok: false, by: job }
 }
+
+// The jobs this session handed back, whose claim by the model is the session's to make the worktree for: newest HANDED_BACK_MAX kept. A claim of any other job (a holder reading its job back) is the model's own.
+export const HANDED_BACK_MAX = 20
+export const withHandedBack = (ids: readonly number[], itemId: number): number[] => [...ids.filter(i => i !== itemId), itemId].slice(-HANDED_BACK_MAX)
+export const withoutHandedBack = (ids: readonly number[], itemId: number): number[] => ids.filter(i => i !== itemId)
 
 // The refusals a claim answers when the session holds nothing of the job. Any other refusal of a claim a reloaded module makes again may leave the session holding the job it claimed before the reload, so the job is handed back.
 const CLAIM_HOLDS_NOTHING = ['dispatch_queue_take_held', 'dispatch_queue_take_not_ready', 'dispatch_queue_item_finished']

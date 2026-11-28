@@ -83,7 +83,7 @@ import { revokeNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, si
 import { NO_AGENT, signInStep } from './plan/sign-in'
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
-import { busyToast, claimHoldsNothing, claimUnreadToast, claimedItemOf, commandFailed, failureWasTold, jobHandedBack, jobPrompt, leaveFailedToast, leftToast, markWritable, notTakenToast, NOT_HOLDER, ownerWaitMs, PROMPT_REFUSED, takePath, takePlanOf, takingJobOf, withFailureTold, withoutFailuresOf, WORKTREE_COMMAND_TIMEOUT_MS, worktreePathOf, type FailureTold, type Hand, type Offer, type TakingJob } from './ready/offer'
+import { busyToast, claimHoldsNothing, claimUnreadToast, claimedItemOf, commandFailed, failureWasTold, jobHandedBack, jobPrompt, leaveFailedToast, leftToast, markWritable, notTakenToast, NOT_HOLDER, ownerWaitMs, PROMPT_REFUSED, takePath, takePlanOf, takingJobOf, withFailureTold, withHandedBack, withoutFailuresOf, withoutHandedBack, WORKTREE_COMMAND_TIMEOUT_MS, worktreePathOf, type FailureTold, type Hand, type Offer, type TakingJob } from './ready/offer'
 import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_STALL_CHECK_MS, RELAY_STALL_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
 import { BROWSER_MISSING_LINE, BROWSER_SERVER, createdTab, failureOf, holdsPlanTab, paneState, type BrowserResult, type BrowserTool } from './relay/browser'
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
@@ -242,6 +242,10 @@ const relayOutbox = atom({ plugin: '50arms', key: 'relayOutbox' } as const, [] a
 const queueJobTaking = atom({ plugin: '50arms', key: 'queueJobTaking' } as const, null as TakingJob | null)
 // the failures of a taken job already told to the model (ready/offer.ts, FailureTold): a repeat of the same job's identical failure wakes the session no more
 const queueFailuresTold = atom({ plugin: '50arms', key: 'queueFailuresTold' } as const, [] as FailureTold[])
+// the id of this process (a reload keeps it: $.state is the process's, and a restart starts it empty), minted by the first module instance that needs it: a mark carrying it belongs to a module that is running now
+const processId = atom({ plugin: '50arms', key: 'processId' } as const, '')
+// the queued jobs this session handed back, by item id (ready/offer.ts, withHandedBack): the model's claim of one of them is the session's to prepare; a claim of any other job (a holder reading its job back) is left alone
+const queueHandedBack = atom({ plugin: '50arms', key: 'queueHandedBack' } as const, [] as number[])
 // the events issued to the session that asked to be acknowledged and whose acknowledgement call has not succeeded (relay/outbox.ts, shouldDropResend). $.state, so a reload keeps it.
 const ackInFlight = atom({ plugin: '50arms', key: 'ackInFlight' } as const, [] as AckInFlight)
 
@@ -310,6 +314,8 @@ async function carryAcrossConversation($: any): Promise<void> {
     ackInFlight: read($, ackInFlight),
     queueJobTaking: read($, queueJobTaking),
     queueFailuresTold: read($, queueFailuresTold),
+    queueHandedBack: read($, queueHandedBack),
+    processId: read($, processId),
     behavior: read($, behavior),
   }
   carriedState = Object.fromEntries(await Promise.all(Object.entries(reads).map(async ([key, value]) => [key, await value] as const)))
@@ -375,6 +381,8 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, ackInFlight, () => carried.ackInFlight),
     update($, queueJobTaking, () => carried.queueJobTaking),
     update($, queueFailuresTold, () => carried.queueFailuresTold),
+    update($, queueHandedBack, () => carried.queueHandedBack),
+    update($, processId, () => carried.processId),
     update($, behavior, () => carried.behavior),
   ])
   // a fresh conversation (or another session taking this one's place) in the same process: what the dashboard shows may have moved while they were in the old one. Loaded from here, so
@@ -2780,6 +2788,12 @@ let queueJobBusy: number | null = null
 
 // The id this module instance minted when it loaded: the owner of every mark it writes (`queueJobTaking`). A reloaded module is a new instance, so it never mistakes the old one's mark for its own.
 const INSTANCE = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+// The id of the process this module runs in: a reload keeps it, so another instance with it is running now. Minted by the first instance that asks, and kept in $.state (carried across a /clear).
+async function processOf($: any): Promise<string> {
+  let id = ''
+  await update($, processId, cur => (id = cur !== '' ? cur : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`))
+  return id
+}
 
 // The next try of a claim the dashboard did not answer, or of a mark whose owner may still be working it: one timer, and the failures in a row that set its wait (relay/config backoffMs)
 let resumeTimer: { cancel: () => void } | null = null
@@ -2808,14 +2822,16 @@ function onTakeClaimed($: any, itemId: number, answer: unknown): void {
   detach($, 'Queued job', workQueueJob($, { item_id: itemId, urgent: false, prepared: null }, answer, false))
 }
 
-// A job a module had in hand when the plugin reloaded (CP-181). The old module is not ended by a reload, so its mark's owner may still be working the job: this module acts on it only once that owner has been silent
-// longer than any step takes (`ownerWaitMs`), and until then looks again when that time comes. A mark of its own (a claim it is retrying) it carries on at once. The claim of the session that holds a job answers it the job once
+// A job a module had in hand when the plugin reloaded (CP-181). The old module is not ended by a reload, so its mark's owner may still be working the job: this module acts on a mark of another process only once that owner has been silent
+// longer than any step takes (`ownerWaitMs`), and until then looks again when that time comes; an owner of this process, which a reload keeps, is running and is never taken over. A mark of its own (a claim it is retrying) it carries on at once. The claim of the session that holds a job answers it the job once
 // more and writes nothing (DX-8401), so the job stays the session's. A mark of another shape belongs to an older plugin's module, which may still be working it: never read, never handed back.
 async function resumeQueueJob($: any): Promise<void> {
   if (queueJobBusy !== null) return
   const job = takingJobOf(await read($, queueJobTaking))
   if (job === null || queueJobBusy !== null) return
-  const wait = ownerWaitMs(job, INSTANCE, await $.clock.now())
+  const wait = ownerWaitMs(job, INSTANCE, await processOf($), await $.clock.now())
+  // another instance of this process is running: its job is its own, and it ends the job or hands it back
+  if (wait === Infinity) return
   if (wait > 0) {
     resumeAfter($, wait)
     return
@@ -2827,21 +2843,25 @@ async function resumeQueueJob($: any): Promise<void> {
 // that finds the mark another instance's (it took the job over) says this instance lost the job.
 async function keepMark($: any, hand: Hand, takingOver: boolean): Promise<TakingJob | null> {
   const now = await $.clock.now()
+  const proc = await processOf($)
   let blocker = null as TakingJob | null
   await update($, queueJobTaking, cur => {
-    const can = markWritable(cur, INSTANCE, now, takingOver)
+    const can = markWritable(cur, INSTANCE, proc, hand.item_id, now, takingOver)
     if (!can.ok) {
       blocker = can.by
       return cur
     }
-    return { item_id: hand.item_id, urgent: hand.urgent, prepared: hand.prepared, owner: INSTANCE, at: now }
+    return { item_id: hand.item_id, urgent: hand.urgent, prepared: hand.prepared, owner: INSTANCE, process: proc, at: now }
   })
   return blocker
 }
 
-// This instance's mark gone: the job is told, left or refused. Another instance's mark is not this one's to clear.
-async function dropMark($: any): Promise<void> {
-  await update($, queueJobTaking, cur => (takingJobOf(cur)?.owner === INSTANCE ? null : cur))
+// This instance's mark of job `itemId` gone: the job is told, left or refused. Another instance's mark, and this instance's mark of another job, are not this job's to clear.
+async function dropMark($: any, itemId: number): Promise<void> {
+  await update($, queueJobTaking, cur => {
+    const mark = takingJobOf(cur)
+    return mark?.owner === INSTANCE && mark.item_id === itemId ? null : cur
+  })
 }
 
 // One queued job in hand, from the claim to the model's prompt. `claimed` is the answer of a claim the model made itself (null: this module claims it). `hand` says how far the job got (`prepared`: the worktree is made),
@@ -2853,17 +2873,20 @@ async function dropMark($: any): Promise<void> {
 // never work at once.
 async function workQueueJob($: any, hand: Hand, claimed: unknown, resumed: boolean): Promise<void> {
   const itemId = hand.item_id
+  const leave = (error: string, quietWhenNotHeld: boolean, answer?: unknown) => leaveQueueJob($, itemId, error, quietWhenNotHeld, answer, claimed !== null)
+  // The model's claim has already landed: the session holds the job, so a session that cannot work it now hands it back and tells the model, never leaving it held with nobody working it. An offer claimed nothing yet.
   if (queueJobBusy !== null) {
-    if (!resumed) $.ui.toast(busyToast(itemId, queueJobBusy).slice(0, TOAST_ERROR_MAX))
+    if (claimed !== null) await leave(`this session is still preparing queued job ${queueJobBusy}`, false, claimed)
+    else if (!resumed) $.ui.toast(busyToast(itemId, queueJobBusy).slice(0, TOAST_ERROR_MAX))
     return
   }
   queueJobBusy = itemId
   let job = hand
-  const leave = (error: string, quietWhenNotHeld: boolean, answer?: unknown) => leaveQueueJob($, itemId, error, quietWhenNotHeld, answer, claimed !== null)
   try {
     const blocker = await keepMark($, job, resumed)
     if (blocker !== null) {
-      if (!resumed) $.ui.toast(busyToast(itemId, blocker.item_id).slice(0, TOAST_ERROR_MAX))
+      if (claimed !== null) await leave(`this session has queued job ${blocker.item_id} in hand`, false, claimed)
+      else if (!resumed) $.ui.toast(busyToast(itemId, blocker.item_id).slice(0, TOAST_ERROR_MAX))
       return
     }
     let answer = claimed
@@ -2877,14 +2900,17 @@ async function workQueueJob($: any, hand: Hand, claimed: unknown, resumed: boole
         }
         claimFailures = 0
         if (resumed && !claimHoldsNothing(taken.body)) return await leave(`the claim made again after the plugin reloaded was refused: ${errText(taken)}`, true)
-        await dropMark($)
+        await dropMark($, itemId)
         $.ui.toast(notTakenToast(itemId, errText(taken)).slice(0, TOAST_ERROR_MAX))
         return
       }
       claimFailures = 0
       answer = taken.body
+      // the session's own claim of a job it handed back is the claim that brings it back: the model's claim of it is no longer the session's to prepare
+      await update($, queueHandedBack, cur => withoutHandedBack(cur, itemId))
     }
-    const plan = takePlanOf(answer)
+    // a job whose worktree is made needs no command: the claim answers the repo's command as it stands now, which the repo may have cleared since
+    const plan = job.prepared !== null ? ({ worktree: null } as const) : takePlanOf(answer)
     if ('malformed' in plan) return await leave(plan.malformed, false, answer)
     if (job.prepared === null && plan.worktree !== null) {
       // the owner's silence is measured from here: the command is the longest step
@@ -2904,7 +2930,7 @@ async function workQueueJob($: any, hand: Hand, claimed: unknown, resumed: boole
     if ((await keepMark($, job, false)) !== null) return
     const issued = await issueEvent($, jobPrompt(itemId, answer, job.prepared), job.urgent)
     // the prompt is the engine's from its call (relay/outbox.ts): a reload from here on must not carry on a job the model is being told
-    await dropMark($)
+    await dropMark($, itemId)
     const failure = await issued.done.catch((err: any) => notTakenLine(errMessage(err)))
     if (failure !== null) await leave(PROMPT_REFUSED(failure), false)
     // the model holds the job now: a later failure of it, even an identical one, is told again
@@ -2922,10 +2948,14 @@ async function workQueueJob($: any, hand: Hand, claimed: unknown, resumed: boole
 // the job (a take that never landed) says nothing. `forceTold`: the model made the claim itself and waits for the job, so it is told at every failure, never once per job and error.
 async function leaveQueueJob($: any, itemId: number, error: string, quietWhenNotHeld = false, answer?: unknown, forceTold = false): Promise<void> {
   const left = await api($, 'DELETE', takePath(itemId), { body: { error } })
-  await dropMark($)
+  await dropMark($, itemId)
   if (left.ok) {
     $.ui.toast(leftToast(itemId, error).slice(0, TOAST_ERROR_MAX))
-    if (answer !== undefined) await tellHandedBack($, itemId, answer, error, forceTold)
+    if (answer !== undefined) {
+      // the model may claim it again: that claim, and no other, is the session's to prepare
+      await update($, queueHandedBack, cur => withHandedBack(cur, itemId))
+      await tellHandedBack($, itemId, answer, error, forceTold)
+    }
   } else if (!(quietWhenNotHeld && left.body?.error === NOT_HOLDER)) $.ui.toast(leaveFailedToast(itemId, error, errText(left)).slice(0, TOAST_ERROR_MAX))
 }
 
@@ -3284,9 +3314,17 @@ async function onAckCall($: any, e: any, next: any) {
   }
   const id = ackedEventId(e.method, e.path)
   if (id !== null && answer.ok) await update($, ackInFlight, cur => clearInFlight(cur, [id]))
-  // the model's own claim of a queue job (a job handed back, claimed again): the session makes its worktree and tells it the job (CP-181). The plugin's own claims never come through this hook.
+  // The model's claim of a queue job the session handed back: the session makes its worktree and tells it the job (CP-181). Any other successful take is the model's own and passes untouched: DX-8401 answers a holder's
+  // claim with its job again (a holder reading its job back, after a /clear, a compaction or from a sub-agent), and that must neither make the worktree again nor tell the job twice. The plugin's own claims never come through this hook.
   const claimedJob = claimedItemOf(e.method, e.path)
-  if (claimedJob !== null && answer.ok && !raisedByPlugin(next.origin)) onTakeClaimed($, claimedJob, (await wholeAnswer($, answer, false)).body)
+  if (claimedJob !== null && answer.ok && !raisedByPlugin(next.origin)) {
+    let handedBack = false
+    await update($, queueHandedBack, cur => {
+      handedBack = cur.includes(claimedJob)
+      return handedBack ? withoutHandedBack(cur, claimedJob) : cur
+    })
+    if (handedBack) onTakeClaimed($, claimedJob, (await wholeAnswer($, answer, false)).body)
+  }
   return named === null ? ran : withNamedNote(ran, named)
 }
 
