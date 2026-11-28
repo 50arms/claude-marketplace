@@ -326,8 +326,12 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
     }
     const late = `the spawn claim took longer than its ${PACING_READ_DEADLINE_MS} ms deadline`
     const reached = await reachDashboard(env, startedAt, late, () => {
+      // sent while the call is pending (a deadline cut-off leaves it sent); an unreachable server took no claim
       sent = true
-      return env.call('POST', CLAIM_PATH, usage === null ? { client_token: clientToken } : { usage, client_token: clientToken })
+      return env.call('POST', CLAIM_PATH, usage === null ? { client_token: clientToken } : { usage, client_token: clientToken }).then(a => {
+        if (a.unreachable) sent = false
+        return a
+      })
     })
     if (reached.kind === 'failed') {
       // the claim was sent and its answer never came: 50 Arms may have taken the slot, so the claim is given back by its token

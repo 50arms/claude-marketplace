@@ -511,7 +511,7 @@ describe('the agent.spawn hook', () => {
     d.world.rateLimits = [{ kind: 'five_hour', percentUsed: 42, resetsAt: '2026-10-20T20:00:00.000Z' }, { kind: 'seven_day', percentUsed: 10, resetsAt: '2026-10-25T00:00:00.000Z' }]
     await spawn($)
     const sent = d.claimBodies.at(-1)
-    expect(Object.keys(sent)).toEqual(['usage'])
+    expect(Object.keys(sent)).toEqual(['usage', 'client_token'])
     expect(sent.usage).toMatchObject({ fiveHour: { percentUsed: 42, resetsAt: '2026-10-20T20:00:00.000Z' }, sevenDay: { percentUsed: 10, resetsAt: '2026-10-25T00:00:00.000Z' } })
     expect(Date.parse(sent.usage.measuredAt)).toBeLessThanOrEqual(Date.parse(sent.usage.reportedAt))
   })
@@ -520,7 +520,7 @@ describe('the agent.spawn hook', () => {
     const d = await session($, on, { pacingLine: { body: wire({ budget: 5, sub_agents: 1 }) } })
     d.world.rateLimits = []
     await spawn($)
-    expect(d.claimBodies.at(-1)).toBeUndefined()
+    expect(Object.keys(d.claimBodies.at(-1) as object)).toEqual(['client_token'])
     expect(d.claimsAllowed).toHaveLength(1)
   })
 
