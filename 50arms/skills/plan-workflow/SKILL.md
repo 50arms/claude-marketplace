@@ -260,7 +260,7 @@ From the plugin's relay (delivery itself):
 
 ## Records
 
-Changed fact → edit; no longer true → delete. Changing, dropping or replacing a decision a person stated always needs that person (mantra item 3); a record or section stating a person's decision changes only on their answer or on words they already gave (a comment, an answer, their message in your session), cited as provenance. A refusal to edit one is the system's rule, never something to route around through a person or another record: a record nobody acts on any more (a decision on a finished card) is left as it is.
+Changed fact → edit; no longer true → delete. Changing, dropping or replacing a decision a person stated always needs that person (mantra item 3); a record or section stating a person's decision changes only on their answer or on words they already gave (a comment, an answer, their message in your session), cited as provenance. A refused edit of one is correct: leave the record as it is (a decision on a finished card is history nobody acts on) and, only when stuck and unsure, raise a problem asking a question, never one asking a person to make the refused edit.
 
 Record as you go, never in one batch at the end. Assume this session can end at any moment (a
 crash, a revoked key, a compaction) and may never sign back in: only the plan, its cards and
