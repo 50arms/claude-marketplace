@@ -14,6 +14,8 @@ const BUNDLE_PATH = '/api/behavior-events/bundle'
 const MIN = 60_000
 const BUNDLE_WAIT_MS = 4_000
 const tool = async ($: any) => (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)) as any
+// dan, 2026-11-28: a held context's calls run; what it is told rides beside the result (a call another hook denied carries it in the denial)
+const said = (r: any): string => [...(typeof r?.deny === 'string' ? [r.deny] : []), ...((r?.context ?? []) as string[])].join('\n\n')
 const joined = (lines: string[] | undefined) => (lines ?? []).join('\n')
 
 for (const surface of SURFACES) {
@@ -98,13 +100,16 @@ This session replaced one on PLAN-23; 3 events wait.`])
       expect(joined(r.context)).toMatch(/loading/)
       expect(joined(r.context)).not.toMatch(/CRITICAL/)
       expect(joined(r.context)).not.toContain(EVENT_TEXT('session_start'))
-      expect((await tool($)).deny).toMatch(/loading/)
+      // every call runs (dan, 2026-11-28); the loading line was told at the start, so the call is told nothing more
+      const during = await tool($)
+      expect(during.deny).toBeUndefined()
+      expect(said(during)).not.toMatch(/loading/)
       await d.clock.advance(RETRY_WINDOW_MS + 1_000)
-      expect((await tool($)).deny).toMatch(/CRITICAL/)
+      expect(said(await tool($))).toMatch(/CRITICAL/)
       d.world.bundle.override = undefined
       await d.clock.advance(MIN)
-      // the refusal of the next call carries the start it was owed, so the context reads it before it runs a tool; the call after it runs
-      expect((await tool($)).deny).toContain(EVENT_TEXT('session_start'))
+      // the next call runs and carries the start it was owed beside its result
+      expect(said(await tool($))).toContain(EVENT_TEXT('session_start'))
       expect((await tool($)).deny).toBeUndefined()
     })
 
@@ -116,7 +121,7 @@ This session replaced one on PLAN-23; 3 events wait.`])
       expect(joined(r.additionalContext)).toMatch(/loading/)
       d.world.bundle.override = undefined
       await d.clock.advance(MIN)
-      expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as any)) as any).deny).toContain(EVENT_TEXT('sub_agent_start'))
+      expect(said(await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as any))).toContain(EVENT_TEXT('sub_agent_start'))
     })
 
     test('a CONNECTED session (its record is on disk) whose plans read fails is held with its start owed', async ($, on) => {
@@ -215,11 +220,11 @@ This session replaced one on PLAN-23; 3 events wait.`])
       const r = await pending
       expect(joined(r.context)).toMatch(/loading/)
       expect(joined(r.context)).not.toContain(EVENT_TEXT('session_start'))
-      // the start is owed and the context held: the next hook's first call waits for the fetch in flight, once, then is refused
+      // the start is owed and the context held: the next hook's first call waits for the fetch in flight, once, then runs (the loading line was told at the start)
       const refused = tool($)
       await d.clock.settle()
       await d.clock.advance(BUNDLE_WAIT_MS)
-      expect((await refused).deny).toMatch(/loading/)
+      expect((await refused).deny).toBeUndefined()
       // the hung read ends, so no timer of this test waits on it
       d.world.contextHangs = false
       d.release()

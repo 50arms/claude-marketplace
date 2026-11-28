@@ -7,7 +7,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { BundleShapeError, bundleFileOf, bundleQuery, changeSignalOf, compareVersions, contextKey, decide, deliveredText, entriesOf, fillSlots, floorIsStale, globMatches, isCurrent, matcherHolds, readBundleBody, readRequestedEndpointsBody, readRoleBody, relayStreams, roleQuery, requestedEndpointsQuery, rewindTold, startsNewContext } from '../hooks/bundle/bundle'
 import type { Bundle, BundleAttachment, BundleEvent, BundleMechanism, BundleSection } from '../hooks/bundle/bundle'
 import { HOLD_LINES, LOADING_LINE, SIGN_IN_INVITATION, TOLD_ON, floorBody, floorLines, floorText } from '../hooks/bundle/floor'
-import { RETRY_WINDOW_MS, failureOf, holdOn, holdReport, leavesReadyList, phaseOf, refusalOf, release, reportStepOf, timeoutFailure } from '../hooks/bundle/hold'
+import { RETRY_WINDOW_MS, failureOf, holdOn, holdReport, leavesReadyList, phaseOf, holdLine, release, reportStepOf, timeoutFailure } from '../hooks/bundle/hold'
 import { settleOwed } from '../hooks/bundle/state'
 import { EMPTY_QUEUE, RETRY_DELAYS_MS, dueRequests, enqueueDelivery, enqueueFloor, enqueueHold, hasFloorPending, settleFailure, settleOk, toTell, deliveryItem } from '../hooks/bundle/reports'
 
@@ -330,7 +330,7 @@ describe('the floor', () => {
     expect(floorText('loading', { reason: 'a 503' })).toContain('(a 503)')
     expect(floorText('plugin_outdated', { reason: 'r', since: 's' })).toContain('[need_version unknown]')
     expect(HOLD_LINES.key_revoked).toContain('sign in again')
-    expect(LOADING_LINE).toContain('Retry')
+    expect(LOADING_LINE).toContain('Keep working')
   })
 })
 
@@ -354,10 +354,10 @@ describe('holds', () => {
   test('a value the plugin does not know is left out of the hold line, so the line names it unknown', () => {
     const notConnected = failureOf(fail({ serverNotConnected: true }))
     expect(notConnected.values).toEqual({})
-    expect(refusalOf(holdOn({}, 'main', notConnected, 'tool.before', 0).main!, RETRY_WINDOW_MS)).toContain('[unreachable_since unknown]')
+    expect(holdLine(holdOn({}, 'main', notConnected, 'tool.before', 0).main!, RETRY_WINDOW_MS)).toContain('[unreachable_since unknown]')
     const noNeed = failureOf(fail({ status: 426, body: {} }))
     expect(noNeed.values).toEqual({})
-    expect(refusalOf(holdOn({}, 'main', noNeed, 'tool.before', 0).main!, RETRY_WINDOW_MS)).toContain('[need_version unknown]')
+    expect(holdLine(holdOn({}, 'main', noNeed, 'tool.before', 0).main!, RETRY_WINDOW_MS)).toContain('[need_version unknown]')
     expect(failureOf(fail({ status: 503, body: { error: 'dashboard_unreachable' } })).values).toEqual({})
   })
 
@@ -379,12 +379,15 @@ describe('holds', () => {
     const holds = holdOn({}, 'main', f, 'tool.before', 1_000)
     const hold = holds.main!
     expect(phaseOf(hold, 1_000 + RETRY_WINDOW_MS - 1)).toBe('loading')
-    expect(refusalOf(hold, 1_000 + 30_000)).toContain('loading')
+    expect(holdLine(hold, 1_000 + 30_000)).toContain('loading')
     expect(phaseOf(hold, 1_000 + RETRY_WINDOW_MS)).toBe('held')
-    const line = refusalOf(hold, 1_000 + RETRY_WINDOW_MS)
+    const line = holdLine(hold, 1_000 + RETRY_WINDOW_MS)
     expect(line).toContain('critical 50 Arms bug')
     expect(line).toContain('0.17.200')
     expect(line).toContain(new Date(1_000).toISOString())
+    // dan, 2026-11-28: the line never tells the agent to stop running tools
+    expect(line).toMatch(/keep working/)
+    expect(line).not.toMatch(/run no tool/)
   })
 
   test('a later failure keeps the time the hold began and the event it began on', () => {

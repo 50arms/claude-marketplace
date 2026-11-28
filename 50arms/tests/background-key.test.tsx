@@ -9,6 +9,9 @@ import { TOAST_ERROR_MAX } from '../hooks/plan/config'
 import { RETRY_WINDOW_MS } from '../hooks/bundle/hold'
 import { test, SURFACES, answerReportEvents, activityRows, dashboard, firstPrompt, startSession } from './plan-kit'
 
+// dan, 2026-11-28: a held context's calls run; what it is told rides beside the result (a call another hook denied carries it in the denial)
+const said = (r: any): string => [...(typeof r?.deny === 'string' ? [r.deny] : []), ...((r?.context ?? []) as string[])].join('\n\n')
+
 const START = { agent_id: 'a1b2c3', agent_type: '50arms:worker-sonnet-high' }
 
 for (const surface of SURFACES) {
@@ -37,6 +40,7 @@ for (const surface of SURFACES) {
 
     test('an MCP from before reply_to_file refuses the bundle fetch: the session is held, and the loading line and the hold line both say its MCP is older and to restart it, never the raw refusal', async ($, on) => {
       on('classic.SessionStart', () => ({}) as any)
+      on('tool.call', () => ({ result: {}, text: 'done' }) as any)
       const d = dashboard(on, { mcp: 'beforeReplyToFile' })
       await startSession($, d, surface)
       const first = await firstPrompt($, 'startup')
@@ -46,10 +50,12 @@ for (const surface of SURFACES) {
       // no fallback: the bundle is not asked for again without the key, and the session stays held
       await d.clock.advance(RETRY_WINDOW_MS + 10_000)
       const held = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)) as any
-      expect(held.deny).toMatch(/MCP server this session runs is older than the plugin/)
-      expect(held.deny).toMatch(/restart the session/)
-      expect(held.deny).not.toMatch(/are loading/)
-      expect(held.deny).not.toMatch(/unrecognized/i)
+      // the call runs (dan, 2026-11-28), and the hold line is told beside it
+      expect(held.deny).toBeUndefined()
+      expect(said(held)).toMatch(/MCP server this session runs is older than the plugin/)
+      expect(said(held)).toMatch(/restart the session/)
+      expect(said(held)).not.toMatch(/are loading/)
+      expect(said(held)).not.toMatch(/unrecognized/i)
     })
 
     test('an MCP that refuses the key from the session start: every toast that says to restart carries the whole sentence, the plan-load toast included', async ($, on) => {

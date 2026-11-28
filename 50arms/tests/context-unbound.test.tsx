@@ -145,8 +145,10 @@ for (const surface of SURFACES) {
       const r = await firstPrompt($, 'startup')
       expect(r.context.join('\n')).toMatch(/loading/)
       d.world.fsError = undefined
-      // the first call after the bundle arrives is refused with the owed start text (read it, then retry); the next one runs
-      expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).deny).toContain(EVENT_TEXT('session_start'))
+      // the first call after the bundle arrives runs and carries the owed start text; the next one runs too
+      const first = (await $.tool.call({ tool: 'Bash', command: 'ls' } as any)) as any
+      expect(first.deny).toBeUndefined()
+      expect(((first.context ?? []) as string[]).join('\n')).toContain(EVENT_TEXT('session_start'))
       expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as any)).text).toBe('done')
     })
   })

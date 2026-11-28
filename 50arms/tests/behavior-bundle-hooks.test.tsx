@@ -13,6 +13,8 @@ const MIN = 60_000
 const NEWER_THAN_ANSWER = `${'c'.repeat(63)}3`
 const SUB = { agent_id: 'a1', agent_type: '50arms:worker-sonnet-high' }
 const tool = async ($: any, agentId?: string) => (await $.tool.call({ tool: 'Bash', command: 'ls', ...(agentId === undefined ? {} : { agentId }) } as any)) as any
+// dan, 2026-11-28: a held context's calls run; what it is told rides beside the result (a call another hook denied carries it in the denial)
+const said = (r: any): string => [...(typeof r?.deny === 'string' ? [r.deny] : []), ...((r?.context ?? []) as string[])].join('\n\n')
 const holdsNow = (d: any) => Object.keys((d.stateWrites.filter((w: any) => w.key === 'behavior').at(-1)?.value as any)?.holds ?? {})
 const reports = (d: any) => d.world.deliveryReports.flatMap((r: any) => r.body.reports) as any[]
 
@@ -97,31 +99,41 @@ for (const surface of SURFACES) {
     })
 
     describe('a bundle that cannot be had', () => {
-      test('a session holding a bundle is held once it is no longer current: the loading line for 2 minutes (a deploy), then the hold line, and session_connect always runs', async ($, on) => {
+      test('a session holding a bundle is held once it is no longer current: the loading line for 2 minutes (a deploy), then the hold line, each told once, and every tool call runs', async ($, on) => {
         const d = await started($, on)
         await firstPrompt($, 'startup')
         expect((await tool($)).deny).toBeUndefined()
         d.world.bundle.override = { status: 503, body: { error: 'dashboard_unreachable', unreachable_since: '2026-10-03T08:00:00.000Z' } }
         await d.clock.advance(2 * MIN)
         const loading = await tool($)
-        expect(loading.deny).toMatch(/loading/)
-        expect(loading.deny).not.toMatch(/critical/i)
+        expect(loading.deny).toBeUndefined()
+        expect(said(loading)).toMatch(/loading/)
+        expect(said(loading)).not.toMatch(/critical/i)
+        // the loading line is told once, not on every call
+        expect(said(await tool($))).not.toMatch(/loading/)
         await d.clock.advance(RETRY_WINDOW_MS)
         const held = await tool($)
-        expect(held.deny).toMatch(/CRITICAL/)
+        expect(held.deny).toBeUndefined()
+        expect(said(held)).toMatch(/CRITICAL/)
+        expect(said(held)).toContain('GET /api/behavior-events/bundle')
+        expect(said(held)).toMatch(/keep working/)
+        // the hold line is told once too, and every tool runs
+        const again = await tool($)
+        expect(again.deny).toBeUndefined()
+        expect(said(again)).not.toMatch(/CRITICAL/)
         expect((await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect' } as any)).deny).toBeUndefined()
         d.world.bundle.override = undefined
         expect((await $.prompt.submit({ text: 'back' })).context).toBeDefined()
         expect((await tool($)).deny).toBeUndefined()
       })
 
-      // CP-169: an MCP server older than the plugin refuses the bundle fetch's `reply_to_file`; the hold has its own reason, refuses what any hold refuses, and ends once the server is current
-      test('a session whose running MCP is older than the plugin is held as stale_mcp: 50arms_api stays refused, session_connect runs, and the hold ends once the server is current', async ($, on) => {
+      // CP-169: an MCP server older than the plugin refuses the bundle fetch's `reply_to_file`; the hold has its own reason and ends once the server is current. Every call runs (dan, 2026-11-28)
+      test('a session whose running MCP is older than the plugin is held as stale_mcp: 50arms_api and session_connect run, and the hold ends once the server is current', async ($, on) => {
         const d = await started($, on, { mcp: 'beforeReplyToFile' })
         await $.prompt.submit({ text: 'hello' })
         await d.clock.advance(RETRY_WINDOW_MS + 1_000)
-        expect((await tool($)).deny).toMatch(/CRITICAL/)
-        expect(((await $.tool.call({ tool: 'mcp__plugin_50arms_platform__50arms_api', method: 'GET', path: '/api/auth/me' } as any)) as any).deny).toMatch(/CRITICAL/)
+        expect(said(await tool($))).toMatch(/CRITICAL/)
+        expect(((await $.tool.call({ tool: 'mcp__plugin_50arms_platform__50arms_api', method: 'GET', path: '/api/auth/me' } as any)) as any).deny).toBeUndefined()
         expect(((await $.tool.call({ tool: 'mcp__plugin_50arms_platform__session_connect' } as any)) as any).deny).toBeUndefined()
         await d.clock.settle()
         const open = reports(d).filter(r => r.kind === 'hold')
@@ -134,18 +146,21 @@ for (const surface of SURFACES) {
         expect(reports(d).filter(r => r.kind === 'hold' && r.ended_at !== undefined)).toHaveLength(1)
       })
 
-      test('a start with no bundle is owed: the start hook tells the loading line, every tool call is refused, and once a bundle arrives the owed texts are delivered before the context runs a tool', async ($, on) => {
+      test('a start with no bundle is owed: the start hook tells the loading line once, every tool call runs, and once a bundle arrives the owed texts are told beside the next result', async ($, on) => {
         const d = await started($, on)
         d.world.bundle.override = { status: 503, body: { error: 'dashboard_unreachable' } }
         await firstPrompt($, 'startup')
         const sub = await $.classic.SubagentStart(SUB)
         expect((sub.additionalContext ?? []).join('\n')).toMatch(/loading/)
-        expect((await tool($, 'a1')).deny).toMatch(/loading/)
+        const during = await tool($, 'a1')
+        expect(during.deny).toBeUndefined()
+        expect(said(during)).not.toMatch(/loading/)
         d.world.bundle.override = undefined
         await d.clock.advance(MIN)
-        // the next call of the sub-agent is refused with its owed start text, so it reads them, then retries the step
-        const refused = await tool($, 'a1')
-        expect(refused.deny).toContain(EVENT_TEXT('sub_agent_start'))
+        // the next call of the sub-agent runs and carries its owed start text
+        const arrived = await tool($, 'a1')
+        expect(arrived.deny).toBeUndefined()
+        expect(said(arrived)).toContain(EVENT_TEXT('sub_agent_start'))
         expect((await tool($, 'a1')).deny).toBeUndefined()
       })
 
@@ -154,7 +169,7 @@ for (const surface of SURFACES) {
         d.world.bundle.minPlugin = '9.0.0'
         await $.prompt.submit({ text: 'hello' })
         await d.clock.advance(RETRY_WINDOW_MS + 1_000)
-        expect((await tool($)).deny).toMatch(/9\.0\.0/)
+        expect(said(await tool($))).toMatch(/9\.0\.0/)
         await d.clock.settle()
         const open = reports(d).filter(r => r.kind === 'hold')
         expect(open).toHaveLength(1)
@@ -173,7 +188,7 @@ for (const surface of SURFACES) {
         d.world.bundle.override = { status: 200, body: { version: 'not a version' } }
         await $.prompt.submit({ text: 'hello' })
         await d.clock.advance(RETRY_WINDOW_MS + 1_000)
-        expect((await tool($)).deny).toMatch(/CRITICAL/)
+        expect(said(await tool($))).toMatch(/CRITICAL/)
       })
     })
 
@@ -277,11 +292,11 @@ for (const surface of SURFACES) {
         expect(compacted.context.join('\n')).toMatch(/loading/)
         d.world.replySha256 = undefined
         await d.clock.advance(RETRY_WINDOW_MS + 10_000)
-        const refused = (await tool($)).deny as string
+        const refused = said(await tool($))
         expect(refused).toContain('\n\nYour role: work the card.')
       })
 
-      test('a failed fetch holds the main conversation: the next tool call is refused and fetches again, a prompt text told meanwhile leaves the hold, and the retold role ends it and is not told again', async ($, on) => {
+      test('a failed fetch holds the main conversation: the next tool call runs, is told the hold line and fetches again, a prompt text told meanwhile leaves the hold, and the retold role ends it and is not told again', async ($, on) => {
         const d = await started($, on)
         BOUND(d)
         d.world.role = ROLE()
@@ -295,10 +310,10 @@ for (const surface of SURFACES) {
         expect(roleTold(between ?? [])).toEqual([])
         expect(d.world.roleReads).toHaveLength(reads)
         await d.clock.advance(RETRY_WINDOW_MS + 10_000)
-        const refused = (await tool($)).deny as string
+        const refused = said(await tool($))
         expect(refused).toContain('could not deliver this agent its instructions')
         d.world.roleOverride = undefined
-        const arrived = (await tool($)).deny as string
+        const arrived = said(await tool($))
         expect(arrived).toMatch(/have arrived/)
         expect(arrived).toContain('\n\nYour role: work the card.')
         expect((await tool($)).deny).toBeUndefined()
@@ -315,7 +330,7 @@ for (const surface of SURFACES) {
         d.world.roleOverride = { status: 426, body: { plugin: { need: '9.9.9' } } }
         await firstPrompt($, 'startup')
         await d.clock.advance(RETRY_WINDOW_MS + 10_000)
-        expect((await tool($)).deny as string).toContain('9.9.9')
+        expect(said(await tool($))).toContain('9.9.9')
       })
 
       test('the role is told again after a compaction, and not on the next prompt for the same key', async ($, on) => {
@@ -397,7 +412,7 @@ for (const surface of SURFACES) {
         await d.clock.advance(RETRY_WINDOW_MS + 10_000)
         const reads = d.world.roleReads.length
         const [refused, prompted] = await Promise.all([tool($), $.prompt.submit({ text: 'together' })])
-        const told = [(refused.deny ?? '') as string, ...((prompted.context ?? []) as string[])]
+        const told = [said(refused), ...((prompted.context ?? []) as string[])]
         expect(told.filter(c => c.includes('Your role: work the card.'))).toHaveLength(1)
         expect(d.world.roleReads).toHaveLength(reads + 1)
       })
@@ -409,9 +424,9 @@ for (const surface of SURFACES) {
         d.world.roleOverride = { status: 500, body: { error: 'role boom' } }
         await firstPrompt($, 'startup')
         await d.clock.advance(RETRY_WINDOW_MS + 10_000)
-        const refused = (await tool($)).deny as string
-        expect(refused).toContain('the role fetch answered 500')
-        expect(refused).not.toContain('the bundle fetch')
+        const refused = said(await tool($))
+        expect(refused).toContain('the role fetch (GET /api/plan-sessions/me/role) answered 500')
+        expect(refused).not.toContain('bundle fetch')
       })
 
       test('two hooks landing together fetch and tell the role once', async ($, on) => {
@@ -456,9 +471,9 @@ for (const surface of SURFACES) {
       await firstPrompt($, 'startup')
       d.world.bundle.override = { status: 500, body: { error: 'boom' } }
       await d.clock.advance(2 * MIN)
-      expect((await tool($)).deny).toMatch(/loading/)
+      expect(said(await tool($))).toMatch(/loading/)
       await d.clock.advance(RETRY_WINDOW_MS + MIN)
-      expect((await tool($)).deny).toMatch(/relay that tells this session when its instructions change is broken/)
+      expect(said(await tool($))).toMatch(/relay that tells this session when its instructions change is broken/)
     })
 
     test('one hook waits for the bundle fetch once: a prompt over a hung fetch takes one wait, not one per event it tells, and a context never borrows another context\'s hold', async ($, on) => {
@@ -476,7 +491,7 @@ for (const surface of SURFACES) {
       const sub = tool($, 'a1')
       await d.clock.settle()
       await d.clock.advance(4_000)
-      expect((await sub).deny).toMatch(/had not answered within the hook deadline/)
+      expect(said(await sub)).toMatch(/had not answered within the hook deadline/)
       d.world.contextHangs = false
       d.release()
       await d.clock.settle()
@@ -631,7 +646,7 @@ for (const surface of SURFACES) {
       d.world.bundle.minPlugin = '9.0.0'
       await $.prompt.submit({ text: 'hello' })
       await d.clock.advance(RETRY_WINDOW_MS + 1_000)
-      expect((await tool($)).deny).toMatch(/9\.0\.0/)
+      expect(said(await tool($))).toMatch(/9\.0\.0/)
       await d.clock.settle()
       expect(reports(d).filter(r => r.kind === 'hold')).toHaveLength(1)
       d.world.bundle.minPlugin = '0.17.0'
@@ -650,7 +665,7 @@ for (const surface of SURFACES) {
       d.world.bundle.override = { status: 503, body: { error: 'dashboard_unreachable' } }
       await firstPrompt($, 'startup')
       await d.clock.advance(RETRY_WINDOW_MS + 1_000)
-      expect((await tool($)).deny).toMatch(/CRITICAL/)
+      expect(said(await tool($))).toMatch(/CRITICAL/)
       d.world.bundle.override = undefined
       d.world.signedOut = 'lapsed'
       expect((await tool($)).deny).toBeUndefined()
@@ -669,7 +684,7 @@ for (const surface of SURFACES) {
         d.world.bundle.minPlugin = '9.0.0'
         await $.prompt.submit({ text: 'hello' })
         await d.clock.advance(RETRY_WINDOW_MS + 1_000)
-        expect((await tool($)).deny).toMatch(/9\.0\.0/)
+        expect(said(await tool($))).toMatch(/9\.0\.0/)
         await d.clock.settle()
       }
 
@@ -708,7 +723,7 @@ for (const surface of SURFACES) {
         d.world.bundle.override = { status: 503, body: { error: 'dashboard_unreachable' } }
         await firstPrompt($, 'startup')
         await d.clock.advance(RETRY_WINDOW_MS + 1_000)
-        expect((await tool($)).deny).toMatch(/CRITICAL/)
+        expect(said(await tool($))).toMatch(/CRITICAL/)
         await endSession($, d)
         await d.clock.settle()
         expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
@@ -857,14 +872,14 @@ for (const surface of SURFACES) {
         const first = (await tool($)) as any
         expect((first.context ?? []).join('\n')).toMatch(/are loading/)
         expect(holdsNow(d)).toEqual(['main'])
-        // past the window the next call is refused with the hold line, the text still owed to the agent
+        // past the window the next call runs and is told the hold line, the text still owed to the agent
         await d.clock.advance(RETRY_WINDOW_MS + 10_000)
-        const refused = (await tool($)).deny as string
+        const refused = said(await tool($))
         expect(refused).not.toMatch(/are loading/)
         expect(refused).toContain('could not be saved to a file')
         expect(reports(d).filter(r => r.kind === 'hold')).toEqual([])
         d.world.carrierWriteFails = false
-        const arrived = (await tool($)).deny as string
+        const arrived = said(await tool($))
         expect(arrived).toMatch(/have arrived/)
         expect(arrived).toMatch(/It is \d+ characters: read \/home\/u\/\.config\/danxbot\/behavior-text\/\S+\.txt/)
         await d.clock.settle()
@@ -886,18 +901,19 @@ for (const surface of SURFACES) {
         // both events failed and are kept; now only the file of tool.after cannot be written
         d.world.carrierWriteFails = false
         d.world.carrierWriteFailsFor = '-tool.after-'
-        const refused = (await tool($)).deny as string
-        // tool.before was told on this call (a pointer to its file, reported delivered), and tool.after failed after it: one answer carries both
+        const refused = said(await tool($))
+        // tool.before was told on this call (a pointer to its file, reported delivered), and tool.after failed after it; the loading line was told on the first call, so it is not told again
         expect(refused).toMatch(/have arrived/)
         expect(refused).toMatch(/read \/home\/u\/\.config\/danxbot\/behavior-text\/\S+-tool\.before-\S+\.txt/)
-        expect(refused).toMatch(/are loading/)
+        expect(refused).not.toMatch(/are loading/)
         await d.clock.settle()
-        expect(deliveredReports(d, 'tool.before')).toHaveLength(1)
-        // the one that failed is still owed, and the one told is not told again
+        // the retold tool.before, and the call's own: the call ran, so its own tool.before is told beside its result
+        expect(deliveredReports(d, 'tool.before')).toHaveLength(2)
+        // the one that failed is still owed, and the retold one is not told again: only this call's own tool.before
         d.world.carrierWriteFailsFor = null
-        const rest = (await tool($)).deny as string
+        const rest = said(await tool($))
         expect(rest).toMatch(/read \/home\/u\/\.config\/danxbot\/behavior-text\/\S+-tool\.after-\S+\.txt/)
-        expect(rest).not.toMatch(/tool\.before/)
+        expect(rest.match(/-tool\.before-/g) ?? []).toHaveLength(1)
         expect((await tool($)).deny).toBeUndefined()
       })
 
@@ -912,7 +928,7 @@ for (const surface of SURFACES) {
         const reads = d.world.bundleReads.length
         await d.clock.advance(RETRY_WINDOW_MS + 10_000)
         expect(d.world.bundleReads.length).toBeGreaterThan(reads)
-        const refused = (await tool($)).deny as string
+        const refused = said(await tool($))
         expect(refused).not.toMatch(/are loading/)
         expect(refused).toContain('requested endpoints could not be fetched')
         await d.clock.settle()

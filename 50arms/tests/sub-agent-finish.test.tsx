@@ -102,9 +102,12 @@ for (const surface of SURFACES) {
       await stopAgent($)
       d.world.carrierWriteFails = true
       expect(((await tool($)).context ?? []).join('\n')).toMatch(/are loading/)
-      expect(((await tool($)).deny as string)).toMatch(/are loading/)
+      // the loading line is told once: the next call runs and is not told it again (dan, 2026-11-28)
+      const again = (await tool($)) as any
+      expect(again.deny).toBeUndefined()
+      expect(((again.context ?? []) as string[]).join('\n')).not.toMatch(/are loading/)
       d.world.carrierWriteFails = false
-      const arrived = (await tool($)).deny as string
+      const arrived = (((await tool($)) as any).context ?? []).join('\n') as string
       expect(arrived).toMatch(/have arrived/)
       expect(arrived).toMatch(/It is \d+ characters: read \/home\/u\/\.config\/danxbot\/behavior-text\/\S+\.txt/)
       expect((await tool($)).deny).toBeUndefined()
@@ -189,7 +192,8 @@ for (const surface of SURFACES) {
         await d.clock.settle()
         expect(holdsNow(d)).toContain('c1')
         expect(holdReports(d)).toEqual([])
-        expect((await childTool($)).deny).toBeDefined()
+        expect(((await childTool($)) as any).deny).toBeUndefined()
+        expect(holdsNow(d)).toContain('c1')
       })
 
       test('a child mid-turn when its background parent ends is not cut off, and neither its own stop nor a parent with no record ends it', async ($, on) => {
@@ -199,7 +203,8 @@ for (const surface of SURFACES) {
         await d.clock.settle()
         expect(holdsNow(d)).toContain('c1')
         expect(holdReports(d)).toEqual([])
-        expect((await childTool($)).deny).toBeDefined()
+        expect(((await childTool($)) as any).deny).toBeUndefined()
+        expect(holdsNow(d)).toContain('c1')
         await spawn($, 'c2', { parentAgentId: 'never-recorded' })
         await startAgent($, 'c2')
         await stopAgent($, 'c2')

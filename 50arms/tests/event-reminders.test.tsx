@@ -119,20 +119,22 @@ for (const surface of SURFACES) {
       expect(doneReminders((await tool($)).context)).toEqual([])
     })
 
-    // CP-146: a bundle that cannot be read is no failure line: the main context is held, its tool call refused with the loading line, and the finish stays owed until a bundle arrives
+    // CP-146: a bundle that cannot be read is no failure line: the main context is held, its tool call runs and is told the loading line, and the finish stays owed until a bundle arrives
     test('a bundle that cannot be read holds the main session and the finish is told once it can be: never lost, never doubled', async ($, on) => {
       const d = await started($, on)
       await finish($, 'a1')
       await d.clock.settle()
       await bundleDown(d)
-      expect((await tool($)).deny).toMatch(/loading/)
+      const held = (await tool($)) as any
+      expect(held.deny).toBeUndefined()
+      expect(((held.context ?? []) as string[]).join('\n')).toMatch(/loading/)
       d.world.bundle.override = undefined
       await d.clock.advance(MIN)
       expect(doneReminders((await tool($)).context)).toEqual([toldFor(STOP_TEXT, 'a1')])
       expect(doneReminders((await tool($)).context)).toEqual([])
     })
 
-    test('a bundle read that outlasts the deadline refuses the tool call with the loading line, and the finish is still owed', async ($, on) => {
+    test('a bundle read that outlasts the deadline runs the tool call and tells the loading line, and the finish is still owed', async ($, on) => {
       const d = await started($, on)
       await finish($, 'a1')
       await d.clock.settle()
@@ -142,7 +144,9 @@ for (const surface of SURFACES) {
       const pending = tool($)
       await d.clock.settle()
       await d.clock.advance(CONTEXT_DEADLINE_MS)
-      expect((await pending).deny).toMatch(/loading/)
+      const ran = (await pending) as any
+      expect(ran.deny).toBeUndefined()
+      expect(((ran.context ?? []) as string[]).join('\n')).toMatch(/loading/)
       // the hung read ends: the held context is released by the answer, and the finish it was owed is told once
       d.world.contextHangs = false
       d.release()

@@ -56,7 +56,7 @@ export function failureOf(f: FetchFailure, what = 'bundle fetch'): Failure {
   if (f.classifierRefused) return { reason: 'classifier_refused', detail: 'the auto mode classifier refused the plugin call', values: {} }
   if (f.staleMcp) return { reason: 'stale_mcp', detail: 'the 50 Arms MCP server this session runs is older than the plugin and refused the fetch', values: {} }
   if (f.status === 503 && f.body?.error === 'dashboard_unreachable') {
-    const detail = `the 50 Arms dashboard is unreachable (${oneLine(String(f.body.detail ?? 'no detail'), 80)})`
+    const detail = `the ${what} found the 50 Arms dashboard unreachable (${oneLine(String(f.body.detail ?? 'no detail'), 80)})`
     return { reason: 'dashboard_unreachable', detail, values: typeof f.body.unreachable_since === 'string' ? { unreachable_since: f.body.unreachable_since } : {} }
   }
   // a plugin below the bundle's floor: the refusal names the version to update to

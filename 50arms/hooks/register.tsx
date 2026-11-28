@@ -3290,10 +3290,13 @@ async function subagentStopEntries($: any, budget: Budget, extra: FinishedAgent[
   if (finished.length === 0) return []
   // who finished is the `subagent.finished` text, then the `subagent.stop` texts
   const named = await tellEvent($, 'subagent.finished', null, budget, { extra: { sub_agent_labels: finished.map(f => f.label).join('; ') } })
-  // a delivery that failed is told as the hold line (once) and kept on the hold to be told again, never dropped
-  if (named.kind === 'held') return textsOrNotice(named)
+  // a held context is told the hold line (once); the finish goes back to be told with the next action once a bundle arrives, never dropped (the call it rode on runs, dan 2026-11-28)
+  if (named.kind === 'held') {
+    await update($, finishedAgents, cur => [...finished, ...cur])
+    return textsOrNotice(named)
+  }
   const outcome = await tellEvent($, 'subagent.stop', null, budget, { extra: { sub_agent_id: finished.map(f => f.id).join(', ') } })
-  if (outcome.kind === 'held') return textsOrNotice(outcome)
+  if (outcome.kind === 'held') return [...textsOf(named), ...textsOrNotice(outcome)]
   const texts = [...textsOf(named), ...textsOf(outcome)]
   return texts.length === 0 ? [] : [texts.join('\n\n')]
 }
