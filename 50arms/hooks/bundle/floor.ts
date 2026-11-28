@@ -17,12 +17,12 @@ export type { FloorReason, HoldReason }
 export const SIGN_IN_INVITATION =
   "50 Arms is installed in this session. When the person wants to plan or build something, you may mention once that 50 Arms can track it as a plan with cards, and that the Sign in button on the 50 Arms band connects this session. Don't push it, and continue normally if they don't sign in."
 
-// While the bundle is being fetched again (a deploy restart takes about 35 s), the agent's tool calls are refused with this: the instructions are loading, retry the same step.
+// While the bundle is being fetched again (a deploy restart takes about 35 s), the agent is told this once; its tool calls run (dan, 2026-11-28: a failed fetch never holds a tool call).
 export const LOADING_LINE =
-  '[50 ARMS] Your instructions from 50 Arms are loading: they could not be delivered yet ({{slot:reason}}). This tool call was not run. Retry this same step shortly, and run nothing else meanwhile.'
+  '[50 ARMS] Your instructions from 50 Arms are loading: they could not be delivered yet ({{slot:reason}}). Keep working: nothing is held, and they arrive with a later tool result.'
 
 const HELD_OPENING =
-  '[50 ARMS] CRITICAL: 50 Arms could not deliver this agent its instructions ({{slot:reason}}), and has tried since {{slot:since}}. This is a critical 50 Arms bug. Tell the person now that this agent is held, name the reason and the time, and wait: run no tool until the person says it is fixed.'
+  '[50 ARMS] CRITICAL: 50 Arms could not deliver this agent its instructions ({{slot:reason}}), and has tried since {{slot:since}}. This is a critical 50 Arms bug. Tell the person now, naming the reason and the time, then keep working without them: no tool call is held, and the plugin keeps fetching them.'
 
 // The hold line of each reason: the opening, then what is specific to it.
 export const HOLD_LINES: Record<HoldReason, string> = {
@@ -31,14 +31,14 @@ export const HOLD_LINES: Record<HoldReason, string> = {
   plugin_outdated: `${HELD_OPENING} The 50 Arms plugin is too old to read them: it must be updated to version {{slot:need_version}} or later (tell the person to update it, then start a new session).`,
   key_revoked: `${HELD_OPENING} This session's 50 Arms key was revoked: the person must sign in again.`,
   relay_broken: `${HELD_OPENING} The relay that tells this session when its instructions change is broken and the check for a change also failed: tell the person to reconnect the 50 Arms dashboard server (/mcp) or start a new session.`,
-  // the running MCP server is older than the plugin and refused a key the fetch sends. Nothing the held session can run fixes it (the desktop app's connector reconnect re-dials
-  // only a failed server, and a stale one still answers), so no tool is let through and the fix is the person's: revert the plugin release, or restart the session, which starts the newest server.
+  // the running MCP server is older than the plugin and refused a key the fetch sends. Nothing the session can run fixes it (the desktop app's connector reconnect re-dials
+  // only a failed server, and a stale one still answers), so the fix is the person's: revert the plugin release, or restart the session, which starts the newest server.
   stale_mcp: `${HELD_OPENING} The fix: revert the plugin release, or restart the session.`,
   classifier_refused: `${HELD_OPENING} The permission classifier refused the plugin's own call to 50 Arms: tell the person to allow the plugin's server in their permissions.`,
 }
 
-// The plugin events a line that has no event of its own is told on: every moment an agent context is started or its tool calls are refused, and the prompt that tells a held main conversation. A hook that tells any
-// other event never passes a refusal line through (`textsOf`), so this list is the only source of the moments a loading or hold line is told on.
+// The plugin events a line that has no event of its own is told on: every moment an agent context is started or a tool call's result carries the notice, and the prompt that tells a held main conversation. A hook that tells any
+// other event never passes a hold line through (`textsOf`), so this list is the only source of the moments a loading or hold line is told on.
 export const TOLD_ON = ['session.start', 'session.resume', 'session.after_compaction', 'session.after_clear', 'subagent.start', 'subagent.compacted', 'tool.before', 'prompt.submit'] as const
 
 // The catalog events that name a reason of their own; the line is told under that event.

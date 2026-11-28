@@ -218,6 +218,8 @@ export type Hold = {
   undelivered?: true
   // the events of this context that failed to be delivered and are not owed (a tool or sub-agent stop text): told again at its next tool call, and the hold ends only when none is left
   retell?: Retell[]
+  // the phase this context was last told (the loading line, then the hold line): each is told once, beside a tool result, never as a refusal
+  noticed?: 'loading' | 'held'
 }
 
 export type Holds = Record<string, Hold>

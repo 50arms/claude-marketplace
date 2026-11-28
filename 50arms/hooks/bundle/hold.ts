@@ -1,6 +1,6 @@
-// An agent context (the main conversation, or a sub-agent by its id) that has no current bundle is held: its tool calls are refused, first with the
-// loading line while the plugin keeps asking (a deploy restart takes about 35 s), then, once the retry window passes, with the hold line of the
-// reason. The hold ends only on a successful fetch. Pure: register.tsx reads the answers and applies the verdicts.
+// An agent context (the main conversation, or a sub-agent by its id) that has no current bundle is held: its instructions are missing, never its tools. It is told so
+// once per phase, beside the result of a call that runs: the loading line while the plugin keeps asking (a deploy restart takes about 35 s), then, once the retry window
+// passes, the hold line of the reason (dan, 2026-11-28: a failed fetch never refuses or holds a tool call). The hold ends only on a successful fetch. Pure: register.tsx reads the answers and applies the verdicts.
 
 import type { FloorReason, HoldReason } from './floor'
 import type { Hold, Holds, Retell } from '../../types'
@@ -80,7 +80,8 @@ export function holdOn(holds: Holds, key: string, failure: Failure, event: strin
   const startedAt = held?.startedAt ?? new Date(now).toISOString()
   const keep = undelivered || held?.undelivered === true ? ({ undelivered: true } as const) : {}
   const retells = retell === null ? (held?.retell ?? []) : addRetell(held?.retell ?? [], retell)
-  return { ...holds, [key]: { reason: failure.reason, detail: failure.detail, values: failure.values, since, startedAt, event: held?.event ?? event, reported: held?.reported ?? 'none', ...keep, ...(retells.length === 0 ? {} : { retell: retells }) } }
+  const noticed = held?.noticed === undefined ? {} : { noticed: held.noticed }
+  return { ...holds, [key]: { reason: failure.reason, detail: failure.detail, values: failure.values, since, startedAt, event: held?.event ?? event, reported: held?.reported ?? 'none', ...keep, ...noticed, ...(retells.length === 0 ? {} : { retell: retells }) } }
 }
 
 const sameRetell = (a: Retell, b: Retell): boolean => a.event === b.event && JSON.stringify(a.matchers) === JSON.stringify(b.matchers)
@@ -101,15 +102,15 @@ export function release(holds: Holds, key: string): { holds: Holds; ended: Hold 
 export type Phase = 'loading' | 'held'
 export const phaseOf = (hold: Hold, now: number): Phase => (now - hold.since < RETRY_WINDOW_MS ? 'loading' : 'held')
 
-// What a refused tool call is told: the loading line during the retry window, then the hold line of the reason.
-export function refusalOf(hold: Hold, now: number): string {
+// What a held context is told: the loading line during the retry window, then the hold line of the reason.
+export function holdLine(hold: Hold, now: number): string {
   const since = hold.startedAt
   if (phaseOf(hold, now) === 'loading') return floorText('loading', { reason: hold.detail })
   return floorText(hold.reason as FloorReason, { reason: hold.detail, since, ...hold.values })
 }
 
-// What a context reads, ahead of the texts it was owed, as the refusal of its next tool call once its bundle arrived.
-export const OWED_ARRIVED = '[50 ARMS] Your instructions from 50 Arms have arrived. This tool call was not run: read them, then retry this same step.'
+// What a context reads, ahead of the texts it was owed, beside the result of its next tool call once its bundle arrived.
+export const OWED_ARRIVED = '[50 ARMS] Your instructions from 50 Arms have arrived: read them before your next step.'
 
 // The report of a hold: `agent_id` is null for the main conversation. With `endedAt` once the hold has ended.
 export function holdReport(hold: Hold, agentId: string | null, pluginVersion: string, endedAt: string | null): Record<string, unknown> {
