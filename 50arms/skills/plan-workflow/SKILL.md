@@ -358,11 +358,7 @@ never stays active just to wait.
 
 While paused, the dashboard holds its nudges, plan-event digests and agent or machine events for
 you, and the plugin's own ready-cards reminder stays quiet. It ends when a person
-writes to you or acts on a card of yours (that message arrives at once), a critical usage-pacing
-stop, a usage-pacing change that lets your account start agents again while your pause waits on
-`pacing` (on pace, with no count cap or a budget above the sub-agents running; the message is delivered
-at once, so a pause taken after a pacing refusal needs no manual wake; a pause on any other cause
-holds that message), your own next dashboard call (the plugin's background reads do not count) other than the pause
+writes to you or acts on a card of yours (that message arrives at once), a critical usage-pacing stop, the ticket-ready message from 50 Arms for a queued spawn while your pause waits on `pacing` (it holds that ticket's slot for 10 minutes and is delivered at once, so a pause taken after a pacing refusal needs no manual wake; a pause on any other cause holds that message), your own next dashboard call (the plugin's background reads do not count) other than the pause
 calls themselves, your own `DELETE /api/plan-sessions/me/pause`, an `other` pause's expiry, or your session going
 silent.
 
@@ -440,12 +436,10 @@ sibling checkout. Remove each once `git status --porcelain` and `git cherry orig
 
 ## Usage pacing
 
-A pacing message (`Usage pacing for your Claude account changed: …`) or a spawn refused with
-`Usage pacing: …` states the level, the sub-agent budget of the whole account and the reset
+A spawn refused with `Usage pacing: …` states the level, the sub-agent budget of the whole account and the reset
 time; trust those numbers, never your own estimate. A refused spawn that is queued names its ticket (`ticket <id>, place <n>`): 50 Arms
 holds a slot for that ticket and messages this session when it is ready, for 10 minutes. Each spawn asks 50 Arms for a slot as it needs one;
-a spawn made while the session holds a ready ticket goes through at once. Pacing messages about sub-agents being free are no longer the way a
-queued session starts again.
+a spawn made while the session holds a ready ticket goes through at once. Those are the only pacing messages a session gets: the critical stop, and the ticket-ready message for its queued spawn.
 
 The budget is a strict cap on sub-agents: exactly that many sub-agents run on the account at
 once, never one more. Main threads (every session's own thread and each running worker
@@ -456,14 +450,13 @@ spawn takes its slot from 50 Arms before it starts, so there is nothing for you 
 cannot be taken (50 Arms could not be reached or did not answer) is refused too, in the same
 `Usage pacing:` words, naming the failure.
 
-**When pacing stops you, pause on `pacing`.** A refused sub-agent spawn, or a pacing message saying the account is
-over pace, critical, or at its sub-agent budget: do not do the work yourself instead. Put
+**When pacing stops you, pause on `pacing`.** A refused sub-agent spawn that is queued (it names its ticket), or the critical pacing stop: do not do the work yourself instead. Put
 any state not yet recorded on its card (an agent note), then call `PUT /api/plan-sessions/me/pause` with
 `waits_on: "pacing"` ("Pausing") and go idle. 50 Arms messages you when your queue ticket is ready (its slot is held for you for 10 minutes),
 and you then carry on where you were. A usage-pacing pause needs no manual wake.
 
 - **On pace**: carry on, and start any sub-agent work waiting on a slot now. A spawn may be moved to haiku when the budget is nearly full, except a screen designer, which is never moved: a designer whose spawn runs below its floor (the higher of Opus and the model of the board's plan-design review grade, at that grade's effort; the model it names, else its agent type's own, and the agent type's effort) is refused, and the refusal names the cheapest of the plugin's own agent types that meets the floor: start it again on that type. A grade the plugin cannot read refuses the start.
-- **Over pace, or the budget full**: pause on `pacing` as above. Agents already running are left to finish.
+- **A spawn refused and queued**: pause on `pacing` as above. Agents already running are left to finish.
 - **Critical**: pause as above after telling each running sub-agent to stop where it is and report back (pacing itself never refuses or pauses your main thread; only sub-agent spawns are refused); once told to continue, continue each with `SendMessage`.
 
 ## Liveness
