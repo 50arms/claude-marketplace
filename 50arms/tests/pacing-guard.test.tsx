@@ -41,41 +41,52 @@ describe('decideSpawn (the decision table)', () => {
     expect(decideSpawn(null, 'opus', false)).toEqual({ kind: 'allow' })
   })
 
-  test('the refusal names level, budget and reset, and says not to retry', () => {
+  test('the refusal names level, budget and reset, and the pause, with no retry or pacing-message instruction', () => {
     for (const level of ['over_pace', 'critical'] as const) {
-      const reason = denyReason(v({ level, budget: 0 }), 'level')
+      const reason = denyReason(v({ level, budget: 0 }), 'level', null)
       expect(reason).toContain(level.replace('_', ' '))
       expect(reason).toContain('budget 0')
       expect(reason).toContain(RESET)
-      expect(reason).toMatch(/do not retry/i)
       expect(reason).toContain(PACED_STOP)
+      expect(reason).not.toMatch(/retry/i)
     }
-    expect(denyReason(v({ budget: 3, subAgents: 3 }), 'budget')).toContain('3 sub-agent(s) already run')
+    expect(denyReason(v({ budget: 3, subAgents: 3 }), 'budget', null)).toContain('3 sub-agent(s) already run')
   })
 
   // DX-5595: slots held for woken sessions count as taken, and the refusal says so (not "already run")
-  test('the held-slot refusal says the slot frees within 60 seconds', () => {
-    const reason = denyReason(v({ budget: 3, subAgents: 2, reservedAgents: 1 }), 'reserved')
+  test('the held-slot refusal names the held slots and no freeing time', () => {
+    const reason = denyReason(v({ budget: 3, subAgents: 2, reservedAgents: 1 }), 'reserved', null)
     expect(reason).toContain('2 sub-agent(s) run on this account and 1 slot(s) are held')
-    expect(reason).toContain('frees within 60 seconds')
+    expect(reason).not.toContain('within 60 seconds')
     expect(reason).toContain(PACED_STOP)
     expect(reason).not.toContain('already run')
   })
 
-  // CP-164: a refused session must act on a LATER pacing message that names free slots (DX-8227's on-pace text: "N of M sub-agents run now, K free: start your waiting sub-agents now, whatever an earlier refusal counted"), whatever count the refusal itself named
-  test('every refusal says a later pacing message naming free sub-agents means start the waiting work at once', () => {
-    const refusals = [
-      denyReason(v({ level: 'over_pace', budget: 0 }), 'level'),
-      denyReason(v({ budget: 3, subAgents: 3 }), 'budget'),
-      denyReason(v({ budget: 3, subAgents: 2, reservedAgents: 1 }), 'reserved'),
-    ]
-    for (const reason of refusals) {
-      expect(reason).toContain('K free')
-      expect(reason).toContain('start the waiting work at once')
-      expect(reason).toContain('whatever count this refusal named')
-      expect(reason).not.toContain('until the verdict changes')
+  // DX-8451 (DEC-3533 v4, DEC-3538 v2): a refusal that queued the session names its ticket, its place, the ready message and the 10-minute hold; no refusal
+  // tells the session to wait for a pacing message that says slots are free, or to retry
+  test('a queued refusal names its ticket, place, the ready message and the 10-minute hold, and never a pacing-message wait or a retry', () => {
+    const waiting = { id: 'tkt-9', place: 2, state: 'waiting' as const }
+    for (const reason of [
+      denyReason(v({ level: 'over_pace', budget: 0 }), 'level', waiting),
+      denyReason(v({ budget: 3, subAgents: 3 }), 'budget', waiting),
+      denyReason(v({ budget: 3, subAgents: 2, reservedAgents: 1 }), 'reserved', waiting),
+    ]) {
+      expect(reason).toContain('ticket tkt-9, place 2')
+      expect(reason).toContain('messages this session when the ticket is ready')
+      expect(reason).toContain('10 minutes')
+      expect(reason).toContain(PACED_STOP)
+      expect(reason).not.toMatch(/retry/i)
+      expect(reason).not.toContain('K free')
+      expect(reason).not.toContain('start the waiting work at once')
       expect(reason.startsWith(REFUSAL_PREFIX)).toBe(true)
     }
+  })
+
+  test('a refusal of a ready ticket names the ticket and that 50 Arms returns it to the queue, with no figures', () => {
+    const reason = denyReason(null, 'reserved', { id: 'tkt-3', place: 0, state: 'ready' })
+    expect(reason).toContain('ticket tkt-3 is ready')
+    expect(reason).toContain('messages this session when it is ready again')
+    expect(reason).not.toContain('level')
   })
 
   test('a claimed verdict with room, or no cap, allows', () => {
@@ -1001,6 +1012,49 @@ describe('failures of the guard itself', () => {
     expect(r.deny).not.toMatch(/already run/)
   })
 
+  // DX-8451 (DEC-3533 v4, DEC-3538 v2): the refusal of a queued session carries its ticket into the words; an old answer with no ticket keeps the old cause
+  test('a claim refused with a queue ticket names the ticket; an answer with no ticket names none', async () => {
+    resetPacing()
+    const queued = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: RESET, main_agents: 2, sub_agents: 3, reserved_agents: 0, line: 'Pacing line.', spend: null, limits: [], worst_limit: null, reason: null, claimed: false, claim_id: null, refusal: 'budget', ticket: { id: 'tkt-7', place: 1, state: 'waiting' } }
+    const env = (body: object): PacingEnv => ({ agentGrade: () => Promise.resolve(undefined), now: () => Promise.resolve(0), within: (_ms, work) => work, call: () => Promise.resolve({ ok: true, status: 200, body } as any), reading: () => Promise.resolve(null), signedIn: () => Promise.resolve(true), sleep: () => Promise.resolve(), toast: () => {} })
+    const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
+    const started = async () => ({ model: 'm', agentId: 'a' }) as any
+    const r = await spawnGuard(env(queued))(e, started)
+    expect(r.deny).toContain('ticket tkt-7, place 1')
+    expect(r.deny).not.toMatch(/retry/i)
+    const old = await spawnGuard(env({ ...queued, ticket: undefined }))(e, started)
+    expect(old.deny).toMatch(/^Usage pacing: 3 sub-agent\(s\) already run/)
+    expect(old.deny).not.toContain('ticket')
+  })
+
+  // DX-8451 (DEC-3533): a granted ready ticket reads no figures: the spawn goes through with no client-side budget refusal, and a host refusal gives the claim back by its token
+  test('a granted ready ticket (no figures) starts the spawn, and the host refusal gives its claim back by the token the claim carried', async () => {
+    resetPacing()
+    const tokens: string[] = []
+    const granted = { account: null, level: null, budget: null, resets_at: null, main_agents: null, sub_agents: null, reserved_agents: null, line: null, spend: null, limits: null, worst_limit: null, reason: null, claimed: true, claim_id: 'claim-9', refusal: null, ticket: null }
+    const env: PacingEnv = {
+      agentGrade: () => Promise.resolve(undefined),
+      now: () => Promise.resolve(0),
+      within: (_ms, work) => work,
+      call: (method: string, path: string, body?: object) => {
+        if (method === 'POST') tokens.push((body as any).client_token)
+        if (method === 'DELETE') expect(path).toBe(`/api/pacing/agents/claim?client_token=${encodeURIComponent(tokens[0]!)}`)
+        return Promise.resolve({ ok: true, status: 200, body: method === 'DELETE' ? { released: true } : granted } as any)
+      },
+      reading: () => Promise.resolve(null),
+      signedIn: () => Promise.resolve(true),
+      sleep: () => Promise.resolve(),
+      toast: () => {},
+    }
+    const e = { prompt: 'p', subagentType: 'general-purpose', background: false, fork: false, parentModel: 'opus' } as any
+    let started = false
+    const r = await spawnGuard(env)(e, async () => { started = true; return { deny: 'host refused' } as any })
+    expect(started).toBe(true)
+    expect(r.deny).toBe('host refused')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0]).toMatch(/\S/)
+  })
+
   // DX-5595: the refusal is worded from the cause 50 Arms names, not from the plugin's own reading of the figures it came with
   test('the wording follows the cause 50 Arms names, even when the figures read otherwise', async () => {
     resetPacing()
@@ -1027,7 +1081,7 @@ describe('failures of the guard itself', () => {
   })
 
   test('a refusal starts with the prefix the skill quotes', () => {
-    expect(denyReason(v({ level: 'critical', budget: 0 }), 'level').startsWith(REFUSAL_PREFIX)).toBe(true)
+    expect(denyReason(v({ level: 'critical', budget: 0 }), 'level', null).startsWith(REFUSAL_PREFIX)).toBe(true)
   })
 })
 

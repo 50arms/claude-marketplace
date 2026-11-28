@@ -1,7 +1,7 @@
 import type { AgentSpawnInput, AgentSpawnResult } from 'claude-code'
 
 import type { PacingVerdict } from '../../types'
-import { claimSlot, releaseClaim, reportClaimFailure } from './pacing-line'
+import { claimSlot, releaseClaim, reportClaimFailure, type ClaimTicket } from './pacing-line'
 import { PACING_READ_DEADLINE_MS, reachDashboard } from './pacing-line'
 import type { PacingEnv } from './pacing-line'
 
@@ -56,29 +56,38 @@ export const REFUSAL_PREFIX = 'Usage pacing:'
 // What a paced session does: record its state on its card, pause on `pacing`, and wait; no work of its own. 50 Arms wakes it when pacing frees slots.
 export const PACED_STOP = 'Record any unrecorded state on the card it concerns, pause with PUT /api/plan-sessions/me/pause {waits_on: "pacing"}, do not do the work yourself, and wait until you are told to continue.'
 
-// What a refused session does when a LATER pacing message says sub-agents are free. It repeats 50 Arms' own on-pace text (`pacing.conduct.on_pace`: "N of M sub-agents run now, K free:
-// start your waiting sub-agents now, whatever an earlier refusal counted") and agrees with the wake of a session paused on pacing: the refusal's own count is stale once that message arrives.
-export const FREED_SLOTS = 'A later pacing message that says sub-agents are free ("N of M sub-agents run now, K free") is the change: then start the waiting work at once, whatever count this refusal named (50 Arms refuses the start itself if the slots are gone again).'
+// The refusal the model reads, worded from the cause 50 Arms' own claim answer names (`refusal`, from its `refusalOf`), never re-derived here. Refusal (section
+// 565 "Refusals" of the event-system plan): a refusal the pacing check decides, so its words stay code. `v` is the verdict of the claim's answer, null when the
+// answer carries no figures (a ready ticket). `ticket` is the queue ticket the answer names (DEC-3538): the refused spawn waits on it, and 50 Arms messages
+// this session when it is ready, so the refusal never tells the session to wait for a pacing message or to retry.
+export function denyReason(v: PacingVerdict | null, why: 'level' | 'budget' | 'reserved', ticket: ClaimTicket | null): string {
+  const cause = causeOf(v, why)
+  const figures = v === null ? '' : ` (level ${v.level.replace('_', ' ')}, ${budgetOf(v)}; ${resetOf(v)})`
+  const head = `${REFUSAL_PREFIX} ${cause}${figures}.`
+  if (ticket === null) return `${head} ${PACED_STOP}`
+  const queue =
+    ticket.state === 'ready'
+      ? `Your ticket ${ticket.id} is ready, but its hold cannot be used now: 50 Arms returns it to the queue and messages this session when it is ready again.`
+      : `Your spawn is queued as ticket ${ticket.id}, place ${ticket.place} in the queue for this account. 50 Arms messages this session when the ticket is ready, ` +
+        'and holds the slot for it for 10 minutes once it is ready.'
+  return `${head} ${queue} ${PACED_STOP}`
+}
 
-// the refusal the model reads, worded from the cause 50 Arms' own claim answer names (`refusal`, from its `refusalOf`), never re-derived here.
-// Refusal (section 565 "Refusals" of the event-system plan): a refusal the pacing check decides, so its words stay code. It decides on the verdict of `GET /api/pacing/line` and the slot claim (`POST /api/pacing/agents/claim`).
-export function denyReason(v: PacingVerdict, why: 'level' | 'budget' | 'reserved'): string {
-  const level = v.level.replace('_', ' ')
-  const budget = v.budget === null ? 'no cap' : v.budget === 0 ? 'budget 0 (start no sub-agent)' : `budget ${v.budget} at once`
-  const reset = v.resetsAt === null ? 'its reset time is unknown' : `usage resets at ${v.resetsAt}`
-  if (why === 'reserved') {
-    // not full of running sub-agents: the free slots are held for sessions that were woken after waiting longer. They free within 60 seconds if unused.
-    return (
-      `${REFUSAL_PREFIX} ${v.subAgents} sub-agent(s) run on this account and ${v.reservedAgents} slot(s) are held for sessions that waited longer, against ${budget} ` +
-      `(level ${level}; ${reset}). A held slot frees within 60 seconds if its session does not use it. ${PACED_STOP} ` +
-      `Do not retry this spawn now: it will be refused until a held slot frees. ${FREED_SLOTS}`
-    )
-  }
-  const cause = why === 'level' ? `this account is ${level}` : `${v.subAgents} sub-agent(s) already run on this account against ${budget}`
-  return (
-    `${REFUSAL_PREFIX} ${cause} (level ${level}, ${budget}; ${reset}). ${PACED_STOP} ` +
-    `Do not retry this spawn: it will be refused again until a later pacing message changes the verdict. ${FREED_SLOTS}`
-  )
+// the cause of a refusal in words; a null verdict names the cause without its figures
+function causeOf(v: PacingVerdict | null, why: 'level' | 'budget' | 'reserved'): string {
+  if (why === 'level') return v === null ? 'this account is not on pace' : `this account is ${v.level.replace('_', ' ')}`
+  if (why === 'budget') return v === null ? 'no sub-agent slot is free on this account' : `${v.subAgents} sub-agent(s) already run on this account against ${budgetOf(v)}`
+  return v === null
+    ? 'a free slot is held for sessions that waited longer'
+    : `${v.subAgents} sub-agent(s) run on this account and ${v.reservedAgents} slot(s) are held for sessions that waited longer, against ${budgetOf(v)}`
+}
+
+function budgetOf(v: PacingVerdict): string {
+  return v.budget === null ? 'no cap' : v.budget === 0 ? 'budget 0 (start no sub-agent)' : `budget ${v.budget} at once`
+}
+
+function resetOf(v: PacingVerdict): string {
+  return v.resetsAt === null ? 'its reset time is unknown' : `usage resets at ${v.resetsAt}`
 }
 
 // The budget's unit is the ACCOUNT's running sub-agents (main threads and worker dispatches are counted as `mainAgents` but never compared), which the claim's
@@ -278,19 +287,17 @@ export function spawnGuard(env: PacingEnv) {
       return { deny: claimFailedReason(claim.failure) }
     }
     // 50 Arms refused the claim, so the spawn is refused, worded from 50 Arms' own cause whatever the plugin's reading of the verdict says
-    if (claim.kind === 'refused') return { deny: denyReason(claim.pacing.verdict, claim.why) }
+    if (claim.kind === 'refused') return { deny: denyReason(claim.pacing?.verdict ?? null, claim.why, claim.ticket) }
     let decision: SpawnDecision = { kind: 'allow' }
-    if (claim.kind === 'claimed') {
-      const verdict = claim.pacing.verdict
-      decision = decideSpawn(verdict, e.fork ? e.parentModel : e.model, designer)
-    }
+    if (claim.kind === 'claimed') decision = decideSpawn(claim.pacing?.verdict ?? null, e.fork ? e.parentModel : e.model, designer)
     try {
       // a fork ignores `model`, so there is nothing to rewrite
       const started = await next(decision.kind === 'downgrade' && !e.fork ? { ...e, model: decision.model } : e)
-      if (claim.kind === 'claimed' && started.deny !== undefined) await releaseClaim(env, claim.claimId)
+      // DX-8451 (DEC-3533): the host's refusal gives the claim back by its client token
+      if (claim.kind === 'claimed' && started.deny !== undefined) await releaseClaim(env, claim.clientToken)
       return started
     } catch (err) {
-      if (claim.kind === 'claimed') await releaseClaim(env, claim.claimId)
+      if (claim.kind === 'claimed') await releaseClaim(env, claim.clientToken)
       throw err
     }
   }

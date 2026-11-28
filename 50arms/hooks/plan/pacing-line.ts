@@ -218,19 +218,63 @@ export const CONNECT_POLL_MS = 500
 // why 50 Arms refused the claim (its `refusalOf`): the server's judgment, worded as it is, never re-derived from figures that may have moved since
 export type RefusalCause = 'level' | 'budget' | 'reserved'
 const REFUSAL_CAUSES: readonly string[] = ['level', 'budget', 'reserved']
+// DX-8451 (DEC-3531, DEC-3538): the queue ticket a refused claim answers: its id, its place among the account's waiting tickets (1 is the front), or state
+// `ready` for a ready ticket whose hold cannot be used now. Null when the answer names none (an answer of a server before the queue, or nothing queued).
+export type ClaimTicket = { id: string; place: number; state: 'waiting' | 'ready' }
 export type Claim =
-  | { kind: 'claimed'; pacing: Pacing; claimId: string }
-  | { kind: 'refused'; pacing: Pacing; why: RefusalCause }
+  // `pacing` is null for a granted ready ticket, whose answer reads no account figures (DEC-3533 v4)
+  | { kind: 'claimed'; pacing: Pacing | null; claimId: string; clientToken: string }
+  // `pacing` is null for a refusal whose answer reads no figures (a ready ticket)
+  | { kind: 'refused'; pacing: Pacing | null; why: RefusalCause; ticket: ClaimTicket | null }
   | { kind: 'unknown' }
   | { kind: 'failed'; failure: string }
 
-export function parseClaim(body: any): Claim {
-  const pacing = parsePacing(body)
-  if (pacing === null) return body.claimed === false && body.claim_id === null ? { kind: 'unknown' } : { kind: 'failed', failure: 'the claim answer has no valid outcome' }
-  if ('error' in pacing) return { kind: 'failed', failure: pacing.error }
-  if (body.claimed === true && typeof body.claim_id === 'string' && body.claim_id !== '') return { kind: 'claimed', pacing, claimId: body.claim_id }
+// An answer carrying no account figures at all: every pacing-line key null and `reason` null (the granted ready-ticket answer, DEC-3533 v4).
+function figuresAbsent(body: any): boolean {
+  return body.level === null && body.line === null && body.reason === null
+}
+
+// The ticket an answer names: null when it names none (a server before DX-8451 has no `ticket` key), 'invalid' when the ticket is malformed.
+function ticketOf(body: any): ClaimTicket | null | 'invalid' {
+  const t = body.ticket
+  if (t === undefined || t === null) return null
+  if (typeof t !== 'object') return 'invalid'
+  if (typeof t.id !== 'string' || t.id === '') return 'invalid'
+  if (!Number.isInteger(t.place) || t.place < 0) return 'invalid'
+  if (t.state !== 'waiting' && t.state !== 'ready') return 'invalid'
+  return { id: t.id, place: t.place, state: t.state }
+}
+
+// A client claim token, one per claim: a claim the deadline cut off is released by it (DEC-3533), so it never holds a phantom slot. Unique enough per
+// session; it names nothing secret.
+export function newClaimToken(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+}
+
+export function parseClaim(body: any, clientToken: string): Claim {
+  if (body === null || typeof body !== 'object') return { kind: 'failed', failure: 'the claim answer is not an object' }
+  const ticket = ticketOf(body)
+  if (ticket === 'invalid') return { kind: 'failed', failure: 'the claim answer has a malformed ticket' }
+  if (body.claimed === true) {
+    if (typeof body.claim_id !== 'string' || body.claim_id === '') return { kind: 'failed', failure: 'the claim answer has no valid outcome' }
+    if (figuresAbsent(body)) return { kind: 'claimed', pacing: null, claimId: body.claim_id, clientToken }
+    const pacing = parsePacing(body)
+    if (pacing === null || 'error' in pacing) return { kind: 'failed', failure: pacing === null ? 'the claim answer has no valid outcome' : pacing.error }
+    return { kind: 'claimed', pacing, claimId: body.claim_id, clientToken }
+  }
   if (body.claimed === false && body.claim_id === null) {
-    return REFUSAL_CAUSES.includes(body.refusal) ? { kind: 'refused', pacing, why: body.refusal } : { kind: 'failed', failure: 'the claim answer refuses without naming a valid cause' }
+    if (figuresAbsent(body)) {
+      return REFUSAL_CAUSES.includes(body.refusal)
+        ? { kind: 'refused', pacing: null, why: body.refusal, ticket }
+        : { kind: 'failed', failure: 'the claim answer refuses without naming a valid cause' }
+    }
+    const pacing = parsePacing(body)
+    // pacing does not see the account (`reason` set): nothing to cap, nothing claimed
+    if (pacing === null) return { kind: 'unknown' }
+    if ('error' in pacing) return { kind: 'failed', failure: pacing.error }
+    return REFUSAL_CAUSES.includes(body.refusal)
+      ? { kind: 'refused', pacing, why: body.refusal, ticket }
+      : { kind: 'failed', failure: 'the claim answer refuses without naming a valid cause' }
   }
   return { kind: 'failed', failure: 'the claim answer has no valid outcome' }
 }
@@ -265,6 +309,9 @@ export async function reachDashboard(env: PacingEnv, startedAt: number, late: st
 export async function claimSlot(env: PacingEnv): Promise<Claim> {
   // a claim still in flight across resetPacing (a new session start) must not write the new session's state
   const gen = generation
+  // DX-8451 (DEC-3533): this claim's client token; a claim the call gave up on is released by it
+  const clientToken = newClaimToken()
+  let sent = false
   try {
     const startedAt = await env.now()
     // the claim carries the session's latest reading, the body of the usage report, and 50 Arms stores it under the claim's own lock before
@@ -277,16 +324,23 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
       /* a reading that cannot be taken is sent without: the claim is judged on what 50 Arms already holds */
     }
     const late = `the spawn claim took longer than its ${PACING_READ_DEADLINE_MS} ms deadline`
-    const reached = await reachDashboard(env, startedAt, late, () => env.call('POST', CLAIM_PATH, usage === null ? undefined : { usage }))
-    if (reached.kind === 'failed') return { kind: 'failed', failure: reached.failure }
+    const reached = await reachDashboard(env, startedAt, late, () => {
+      sent = true
+      return env.call('POST', CLAIM_PATH, usage === null ? { client_token: clientToken } : { usage, client_token: clientToken })
+    })
+    if (reached.kind === 'failed') {
+      // the claim was sent and its answer never came: 50 Arms may have taken the slot, so the claim is given back by its token
+      if (sent) void releaseClaim(env, clientToken)
+      return { kind: 'failed', failure: reached.failure }
+    }
     if (reached.kind === 'unloaded') return { kind: 'unknown' }
     const r = reached.r
     // signed out: outside pacing (50 Arms counts none of this session's agents, so there is no cap to hold its spawns to)
     if (isSignedOut(r)) return { kind: 'unknown' }
     if (!r.ok) return { kind: 'failed', failure: r.status === 0 ? errText(r) : `the spawn claim answered ${r.status}` }
-    const claim = parseClaim(r.body)
+    const claim = parseClaim(r.body, clientToken)
     if ((claim.kind === 'claimed' || claim.kind === 'refused') && gen === generation) {
-      cache = { pacing: claim.pacing, fetchedAt: startedAt }
+      cache = claim.pacing === null ? null : { pacing: claim.pacing, fetchedAt: startedAt }
       hasSucceeded = true
       lastError = null
       lastClaimError = null
@@ -295,6 +349,7 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
     }
     return claim
   } catch (err: any) {
+    if (sent) void releaseClaim(env, clientToken)
     return { kind: 'failed', failure: String(err?.message ?? err) }
   }
 }
@@ -317,7 +372,7 @@ export function reportClaimFailure(env: PacingEnv, failure: string): void {
 // (AGENT_CLAIM_LAPSE_MS, 60 s), which stays the recovery. a give-back that fails is told once per distinct text (the same rule as
 // reportClaimFailure), never silently: an error answer, an unreachable server, a timeout or a throw. A signed-out answer and `{released:false}`
 // (a 200, normal) stay silent; a good give-back clears the slot, so the same failure after it is told again.
-export async function releaseClaim(env: PacingEnv, claimId: string): Promise<void> {
+export async function releaseClaim(env: PacingEnv, clientToken: string): Promise<void> {
   // a give-back is only ever of a `claimed` claim, but not always one that set hasSucceeded: a claim in flight across a session start
   // (resetPacing) comes back `claimed` without writing the new session's state. Its give-back is harmless (50 Arms scopes deleteAgentClaim to the
   // session and answers released:false). One that crosses resetPacing itself writes and tells nothing, and its claim lapses in 50 Arms.
@@ -325,7 +380,7 @@ export async function releaseClaim(env: PacingEnv, claimId: string): Promise<voi
   try {
     let failure: string | null = null
     try {
-      const r = await env.within<Api | undefined>(PACING_READ_DEADLINE_MS, env.call('DELETE', `/api/pacing/agents/claim?claim_id=${encodeURIComponent(claimId)}`), () => undefined)
+      const r = await env.within<Api | undefined>(PACING_READ_DEADLINE_MS, env.call('DELETE', `${CLAIM_PATH}?client_token=${encodeURIComponent(clientToken)}`), () => undefined)
       if (r === undefined) failure = `the give-back timed out after ${PACING_READ_DEADLINE_MS}ms`
       else if (r.unreachable) failure = 'the dashboard MCP server is not reachable from this session'
       else if (!r.ok && !isSignedOut(r)) failure = r.status === 0 ? errText(r) : `the claim give-back answered ${r.status}`

@@ -4,7 +4,7 @@ import "./run-tests-with-npm-test.generated"
 // read starts the sub-agent without a line and toasts once.
 import { describe, expect } from 'claude-code/testing'
 
-import { claimSlot, parsePacing, pacingLine, refreshPacing, resetPacing, slotWaiting } from '../hooks/plan/pacing-line'
+import { claimSlot, parseClaim, parsePacing, pacingLine, refreshPacing, resetPacing, slotWaiting } from '../hooks/plan/pacing-line'
 import type { PacingEnv } from '../hooks/plan/pacing-line'
 import { test, EVENT_TEXT, dashboard, startSession } from './plan-kit'
 
@@ -173,5 +173,36 @@ describe('the slot-refused state (the title hourglass)', () => {
     expect(slotWaiting()).toBe(true)
     resetPacing()
     expect(slotWaiting()).toBe(false)
+  })
+})
+
+// DX-8451 (DEC-3531, DEC-3533 v4, DEC-3538 v2): the claim answer read both ways. An answer before the queue has no ticket; a queued refusal names its ticket; a
+// granted ready ticket carries no figures and is granted all the same.
+describe('the claim answer, old and new', () => {
+  const figures = { account: 'uuid:u1', level: 'on_pace', budget: 3, resets_at: null, main_agents: 1, sub_agents: 3, reserved_agents: 0, line: LINE, spend: null, limits: [], worst_limit: null, reason: null }
+  const TOKEN = 'token-1'
+
+  test('an old refusal (no ticket key) parses with no ticket', () => {
+    expect(parseClaim({ ...figures, claimed: false, claim_id: null, refusal: 'budget' }, TOKEN)).toMatchObject({ kind: 'refused', why: 'budget', ticket: null })
+  })
+
+  test('a queued refusal names its ticket', () => {
+    const claim = parseClaim({ ...figures, claimed: false, claim_id: null, refusal: 'budget', ticket: { id: 'tkt-1', place: 2, state: 'waiting' } }, TOKEN)
+    expect(claim).toMatchObject({ kind: 'refused', why: 'budget', ticket: { id: 'tkt-1', place: 2, state: 'waiting' } })
+  })
+
+  test('a malformed ticket fails the claim', () => {
+    expect(parseClaim({ ...figures, claimed: false, claim_id: null, refusal: 'budget', ticket: { id: '', place: 1, state: 'waiting' } }, TOKEN).kind).toBe('failed')
+  })
+
+  test('a granted ready ticket with no figures is granted with no pacing, and carries the token it was claimed with', () => {
+    const granted = { account: null, level: null, budget: null, resets_at: null, main_agents: null, sub_agents: null, reserved_agents: null, line: null, spend: null, limits: null, worst_limit: null, reason: null, claimed: true, claim_id: 'claim-4', refusal: null, ticket: null }
+    expect(parseClaim(granted, TOKEN)).toEqual({ kind: 'claimed', pacing: null, claimId: 'claim-4', clientToken: TOKEN })
+  })
+
+  test('a granted claim with figures keeps them', () => {
+    const claim = parseClaim({ ...figures, claimed: true, claim_id: 'claim-5', refusal: null }, TOKEN)
+    expect(claim).toMatchObject({ kind: 'claimed', claimId: 'claim-5', clientToken: TOKEN })
+    expect(claim.kind === 'claimed' && claim.pacing?.verdict.budget).toBe(3)
   })
 })

@@ -442,9 +442,10 @@ sibling checkout. Remove each once `git status --porcelain` and `git cherry orig
 
 A pacing message (`Usage pacing for your Claude account changed: …`) or a spawn refused with
 `Usage pacing: …` states the level, the sub-agent budget of the whole account and the reset
-time; trust those numbers, never your own estimate. Never retry a refused spawn: it waits for the next pacing message. A pacing
-message that says sub-agents are free (`N of M sub-agents run now, K free`) means start the waiting work at once, whatever count an
-earlier refusal named; 50 Arms refuses the start itself if the slots are gone again.
+time; trust those numbers, never your own estimate. A refused spawn that is queued names its ticket (`ticket <id>, place <n>`): 50 Arms
+holds a slot for that ticket and messages this session when it is ready, for 10 minutes. Each spawn asks 50 Arms for a slot as it needs one;
+a spawn made while the session holds a ready ticket goes through at once. Pacing messages about sub-agents being free are no longer the way a
+queued session starts again.
 
 The budget is a strict cap on sub-agents: exactly that many sub-agents run on the account at
 once, never one more. Main threads (every session's own thread and each running worker
@@ -456,12 +457,12 @@ cannot be taken (50 Arms could not be reached or did not answer) is refused too,
 `Usage pacing:` words, naming the failure.
 
 **When pacing stops you, pause on `pacing`.** A refused sub-agent spawn, or a pacing message saying the account is
-over pace, critical, or at its sub-agent budget: do not retry the spawn and do not do the work yourself instead. Put
+over pace, critical, or at its sub-agent budget: do not do the work yourself instead. Put
 any state not yet recorded on its card (an agent note), then call `PUT /api/plan-sessions/me/pause` with
-`waits_on: "pacing"` ("Pausing") and go idle. 50 Arms wakes you with the message that lets you continue (a slot it
-offered you is held for you for 60 seconds), and you then carry on where you were. A usage-pacing pause needs no manual wake.
+`waits_on: "pacing"` ("Pausing") and go idle. 50 Arms messages you when your queue ticket is ready (its slot is held for you for 10 minutes),
+and you then carry on where you were. A usage-pacing pause needs no manual wake.
 
-- **On pace**: carry on, and start any sub-agent work waiting on a slot now when the message says sub-agents are free. A spawn may be moved to haiku when the budget is nearly full, except a screen designer, which is never moved: a designer whose spawn runs below its floor (the higher of Opus and the model of the board's plan-design review grade, at that grade's effort; the model it names, else its agent type's own, and the agent type's effort) is refused, and the refusal names the cheapest of the plugin's own agent types that meets the floor: start it again on that type. A grade the plugin cannot read refuses the start.
+- **On pace**: carry on, and start any sub-agent work waiting on a slot now. A spawn may be moved to haiku when the budget is nearly full, except a screen designer, which is never moved: a designer whose spawn runs below its floor (the higher of Opus and the model of the board's plan-design review grade, at that grade's effort; the model it names, else its agent type's own, and the agent type's effort) is refused, and the refusal names the cheapest of the plugin's own agent types that meets the floor: start it again on that type. A grade the plugin cannot read refuses the start.
 - **Over pace, or the budget full**: pause on `pacing` as above. Agents already running are left to finish.
 - **Critical**: pause as above after telling each running sub-agent to stop where it is and report back (pacing itself never refuses or pauses your main thread; only sub-agent spawns are refused); once told to continue, continue each with `SendMessage`.
 

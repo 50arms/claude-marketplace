@@ -972,11 +972,13 @@ export function dashboard(
   // every dashboard server name a hook called, whichever the session has
   const serversCalled = new Set<string>()
   const pacingReads: number[] = []
-  // DX-5593: the spawn claim (POST /api/pacing/agents/claim) and its give-back (DELETE ...?claim_id=): every attempt, the ids 50 Arms allowed, the ids given back
+  // DX-5593: the spawn claim (POST /api/pacing/agents/claim) and its give-back (DELETE ...?client_token=): every attempt, the ids 50 Arms allowed, the ids given back (each by the token its claim carried)
   const claimAttempts = { n: 0 }
   const designerGradeReads: string[] = []
   const claimsAllowed: string[] = []
   const claimsReleased: string[] = []
+  // DX-8451 (DEC-3533): the claim each client token names, so a give-back by token is recorded as the claim it gives back
+  const claimIdsByToken = new Map<string, string>()
   // DX-5593 (N2): the body of every claim POST, to see what reading it carried
   const claimBodies: any[] = []
   const heldClaims = new Set<string>()
@@ -1190,7 +1192,9 @@ export function dashboard(
       if (options.mcp === 'refused') return { deny: CLASSIFIER_REFUSAL }
       if (world.signedOut !== null) return { value: { content: [{ type: 'text', text: world.signedOut === 'revoked' ? KEY_REVOKED_HALT : world.signedOut === 'lapsed' ? KEY_LAPSED_HALT : SIGN_IN_HALT }], isError: true } }
       if (e.args.method === 'DELETE') {
-        const id = new URL(e.args.path, 'http://dashboard.local').searchParams.get('claim_id') as string
+        // DX-8451 (DEC-3533): the give-back names its claim by the client token the claim carried
+        const token = new URL(e.args.path, 'http://dashboard.local').searchParams.get('client_token') as string
+        const id = claimIdsByToken.get(token) ?? `unknown-token:${token}`
         claimsReleased.push(id)
         if (options.claimRelease !== undefined) return { value: 'status' in options.claimRelease ? reply({ error: 'release boom' }, options.claimRelease.status) : reply(options.claimRelease.body) }
         return { value: reply({ released: heldClaims.delete(id) }) }
@@ -1210,6 +1214,7 @@ export function dashboard(
       const id = `claim-${claimsAllowed.length + 1}`
       claimsAllowed.push(id)
       heldClaims.add(id)
+      claimIdsByToken.set(claimBodies[claimBodies.length - 1]?.client_token, id)
       return { value: reply({ ...line, sub_agents: live, claimed: true, claim_id: id, refusal: null }) }
     }
     // DX-4234 / DX-4632: the restart notice is the server's own tool, named without arguments; kept out of `calls` like the context reads
