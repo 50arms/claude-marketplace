@@ -328,6 +328,8 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
   const carried = carriedState
   carriedState = null
   if (carried === null || (source !== 'clear' && source !== 'resume')) return
+  // the module's own mark is the authority over the value read at session.end: a mark this instance wrote in the gap (the first mark of an offer) stays, and a mark it dropped in the gap stays dropped
+  carried.queueJobTaking = markToRestore(carried.queueJobTaking)
   await Promise.all([
     update($, view, () => carried.view),
     update($, gate, () => carried.gate),
@@ -379,8 +381,7 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, spawnedAgents, () => carried.spawnedAgents),
     update($, relayOutbox, () => carried.relayOutbox),
     update($, ackInFlight, () => carried.ackInFlight),
-    // the module's own mark is the authority over the value read at session.end: a write this instance made in the gap (the first mark of an offer) stays, and a mark it dropped in the gap stays dropped
-    update($, queueJobTaking, () => markToRestore(carried.queueJobTaking)),
+    update($, queueJobTaking, () => carried.queueJobTaking),
     update($, queueFailuresTold, () => carried.queueFailuresTold),
     update($, queueHandedBack, () => carried.queueHandedBack),
     update($, queueTakenOver, () => carried.queueTakenOver),
