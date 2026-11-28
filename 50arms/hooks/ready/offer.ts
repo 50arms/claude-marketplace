@@ -108,14 +108,23 @@ export function takeoverOf(job: TakingJob, owner: string, now: number, watched: 
 // The mark a takeover judged: it replaces exactly this owner's mark at this `at`, never a mark the owner wrote since (compare-and-set)
 export type Judged = { owner: string; at: number }
 
-// Whether the module `owner` may write its job in hand, `itemId`, over the mark `cur`. Over no mark only for the first write of a job (`first`): a later write that finds its mark missing means the job was taken over
-// and told while the write's call was away, so the job is lost to this module, never made again. Over one of another shape (never read, so never kept from a new job). Its own mark of another job stands in the way (that
-// job's claim is unanswered, or it is in hand) and so does a mark another instance wrote, which is the blocker the answer names, unless `over` (the module carries that very job on after `takeoverOf` said take) names
-// exactly that mark's owner and `at`.
-export function markWritable(cur: unknown, owner: string, itemId: number, over: Judged | null, first: boolean): { ok: true } | { ok: false; by: TakingJob | null } {
+// The jobs a module took over from another instance (newest TAKEN_OVER_MAX kept), with the instance that took each: positive evidence that a copy which finds its mark missing is a late copy of the owner it replaced.
+// A mark also goes missing without a takeover (a /clear's carry gap, an older module clearing it), and then the job is still the session's.
+export type TakenOver = { item_id: number; by: string }
+export const TAKEN_OVER_MAX = 20
+export const withTakenOver = (list: readonly TakenOver[], itemId: number, by: string): TakenOver[] => [...list.filter(t => t.item_id !== itemId), { item_id: itemId, by }].slice(-TAKEN_OVER_MAX)
+export const withoutTakenOver = (list: readonly TakenOver[], itemId: number): TakenOver[] => list.filter(t => t.item_id !== itemId)
+// whether `owner` is a late copy for `itemId`: another instance took the job over from it
+export const lostToTakeover = (list: readonly TakenOver[], itemId: number, owner: string): boolean => list.some(t => t.item_id === itemId && t.by !== owner)
+
+// Whether the module `owner` may write its job in hand, `itemId`, over the mark `cur`. Over no mark: written again, as the job is still the session's, unless `lost` (another instance took the job over from this
+// module, `lostToTakeover`) or the write is itself a takeover (`over`) whose judged mark has vanished (nothing to take over). Over one of another shape (never read, so never kept from a new job). Its own mark of another
+// job stands in the way (that job's claim is unanswered, or it is in hand) and so does a mark another instance wrote, which is the blocker the answer names, unless `over` (the module carries that very job on after
+// `takeoverOf` said take) names exactly that mark's owner and `at`.
+export function markWritable(cur: unknown, owner: string, itemId: number, over: Judged | null, lost: boolean): { ok: true } | { ok: false; by: TakingJob | null } {
   const raw = cur !== null && cur !== undefined
   const job = takingJobOf(cur)
-  if (job === null) return raw || (first && over === null) ? { ok: true } : { ok: false, by: null }
+  if (job === null) return raw || (over === null && !lost) ? { ok: true } : { ok: false, by: null }
   if (job.owner === owner) return job.item_id === itemId ? { ok: true } : { ok: false, by: job }
   return over !== null && job.item_id === itemId && job.owner === over.owner && job.at === over.at ? { ok: true } : { ok: false, by: job }
 }

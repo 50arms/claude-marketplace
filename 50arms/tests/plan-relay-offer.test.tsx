@@ -6,10 +6,10 @@ import "./run-tests-with-npm-test.generated"
 // CP-181: a reload keeps the job in hand. The reloaded module claims it again (the holder's claim answers the job once more) and carries on; it hands the job back only when its worktree cannot be prepared.
 import { describe, expect } from 'claude-code/testing'
 
-import { claimedItemOf, markWritable, NOT_HOLDER, OWNER_SILENT_MS, takeoverOf, withHandedBack, withoutHandedBack, HANDED_BACK_MAX, type Offer, type TakingJob } from '../hooks/ready/offer'
+import { claimedItemOf, markWritable, NOT_HOLDER, OWNER_SILENT_MS, takeoverOf, withHandedBack, withoutHandedBack, HANDED_BACK_MAX, lostToTakeover, withTakenOver, withoutTakenOver, TAKEN_OVER_MAX, type Offer, type TakingJob } from '../hooks/ready/offer'
 import { fromPending, toPending } from '../hooks/relay/outbox'
 import { STALE_PENDING_DETAIL } from '../hooks/relay/text'
-import { test, relayPhase, SURFACES, dashboard, startSession } from './plan-kit'
+import { test, relayPhase, SURFACES, dashboard, startSession, answerEngineClear, CLEARED_SESSION_ID } from './plan-kit'
 
 const ITEM = 41
 const OFFER = { item_id: ITEM }
@@ -53,23 +53,34 @@ const SAVED = { planId: 23, cursor: 'c1', text: OFFER_TEXT, urgent: false, acks:
 const job = (owner: string, at: number, retryAt: number | null = null, item = ITEM): TakingJob => ({ item_id: item, urgent: false, prepared: null, owner, at, retry_at: retryAt })
 
 describe('the job in hand and its owner (CP-181, DEC-3425)', () => {
-  test("a module may write its job over no mark only for the job's first write, over its own mark of the same job and over one of another shape; never over its own mark of another job or another instance's, unless it takes that very mark over, judged by owner and at", () => {
-    const me = (cur: unknown, item: number, over: { owner: string; at: number } | null, first = false) => markWritable(cur, 'me', item, over, first)
-    expect(me(null, ITEM, null, true)).toEqual({ ok: true })
-    // a later write that finds its mark missing: the job was taken over and told, so it is lost to this module
-    expect(me(null, ITEM, null, false)).toEqual({ ok: false, by: null })
+  test("a module may write its job over no mark (the job is still its session's) unless another instance took it over from it; over its own mark of the same job and over one of another shape; never over its own mark of another job or another instance's, unless it takes that very mark over, judged by owner and at", () => {
+    const me = (cur: unknown, item: number, over: { owner: string; at: number } | null, lost = false) => markWritable(cur, 'me', item, over, lost)
+    expect(me(null, ITEM, null)).toEqual({ ok: true })
+    // a late copy: another instance took the job over from it and told it, so it stops, never writing a fresh mark
+    expect(me(null, ITEM, null, true)).toEqual({ ok: false, by: null })
     // a takeover of a mark that is gone is no takeover
-    expect(me(null, ITEM, { owner: 'old', at: NOW }, true)).toEqual({ ok: false, by: null })
+    expect(me(null, ITEM, { owner: 'old', at: NOW })).toEqual({ ok: false, by: null })
     expect(me(job('me', NOW), ITEM, null)).toEqual({ ok: true })
-    expect(me({ item_id: ITEM, assignment_id: 7 }, ITEM, null, true)).toEqual({ ok: true })
+    expect(me({ item_id: ITEM, assignment_id: 7 }, ITEM, null)).toEqual({ ok: true })
     // its own mark of another job: that job's claim is unanswered, or it is in hand
-    expect(me(job('me', NOW), ITEM + 1, null, true)).toEqual({ ok: false, by: job('me', NOW) })
-    expect(me(job('old', NOW), ITEM, null, true)).toEqual({ ok: false, by: job('old', NOW) })
-    expect(me(job('old', NOW), ITEM, { owner: 'old', at: NOW }, true)).toEqual({ ok: true })
-    expect(me(job('old', NOW), ITEM + 1, { owner: 'old', at: NOW }, true)).toEqual({ ok: false, by: job('old', NOW) })
+    expect(me(job('me', NOW), ITEM + 1, null)).toEqual({ ok: false, by: job('me', NOW) })
+    expect(me(job('old', NOW), ITEM, null)).toEqual({ ok: false, by: job('old', NOW) })
+    expect(me(job('old', NOW), ITEM, { owner: 'old', at: NOW })).toEqual({ ok: true })
+    expect(me(job('old', NOW), ITEM + 1, { owner: 'old', at: NOW })).toEqual({ ok: false, by: job('old', NOW) })
     // the owner wrote again between the judgement and the write: the takeover does not replace that mark
-    expect(me(job('old', NOW + 1), ITEM, { owner: 'old', at: NOW }, true)).toEqual({ ok: false, by: job('old', NOW + 1) })
-    expect(me(job('other', NOW), ITEM, { owner: 'old', at: NOW }, true)).toEqual({ ok: false, by: job('other', NOW) })
+    expect(me(job('old', NOW + 1), ITEM, { owner: 'old', at: NOW })).toEqual({ ok: false, by: job('old', NOW + 1) })
+    expect(me(job('other', NOW), ITEM, { owner: 'old', at: NOW })).toEqual({ ok: false, by: job('other', NOW) })
+  })
+
+  test('a copy is late for a job only when another instance took it over from it: the taker itself, and any other job, are not', () => {
+    const list = withTakenOver([], ITEM, 'taker')
+    expect(lostToTakeover(list, ITEM, 'old')).toBe(true)
+    expect(lostToTakeover(list, ITEM, 'taker')).toBe(false)
+    expect(lostToTakeover(list, ITEM + 1, 'old')).toBe(false)
+    expect(lostToTakeover(withoutTakenOver(list, ITEM), ITEM, 'old')).toBe(false)
+    const many = Array.from({ length: TAKEN_OVER_MAX }, (_, i) => ({ item_id: i + 1000, by: 'x' }))
+    expect(withTakenOver(many, 1, 'x')).toHaveLength(TAKEN_OVER_MAX)
+    expect(withTakenOver(withTakenOver([], ITEM, 'a'), ITEM, 'b')).toEqual([{ item_id: ITEM, by: 'b' }])
   })
 
   test('the reader takes a mark over by signs of life: its own when it is due, a retry mark once retry_at has passed, any other mark only after its own timer ran a whole window with at unchanged and is still pending until then', () => {
@@ -467,6 +478,78 @@ for (const surface of SURFACES) {
         expect(live.every((m: any) => m.retry_at === null)).toBe(true)
         expect(marksWritten(d).at(-1)).toBeNull()
         expect(calls(d, 'DELETE')).toHaveLength(1)
+      })
+
+      test("the mark goes missing between the claim's send and its answer (a /clear's carry gap, or an older module clearing it): the job is still the session's, so its worktree is made and its prompt told once", async ($, on) => {
+        answerEngineClear(on)
+        const d = dashboard(on, { stateSteps: true })
+        d.world.takeReplies[ITEM] = { body: ANSWER }
+        d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
+        await startSession($, d, surface)
+        d.holdApi(3_000)
+        d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
+        await d.clock.advance(500)
+        // the claim is on its way, its mark is written: the state is emptied under it
+        d.wipeState()
+        d.holdApi(0)
+        await d.clock.advance(6_000)
+        await d.clock.settle()
+        expect(calls(d, 'POST')).toHaveLength(1)
+        expect(makeRuns(d)).toHaveLength(1)
+        expect(told(d)).toHaveLength(1)
+        expect(answerIn(told(d)[0])).toEqual(ANSWER)
+        expect(calls(d, 'DELETE')).toEqual([])
+      })
+
+      test("a /clear's restore writes back a mark the module dropped meanwhile: the job is not told a second time, and a mark the module wrote in the gap is not lost", async ($, on) => {
+        answerEngineClear(on)
+        const d = dashboard(on, { stateSteps: true })
+        d.world.takeReplies[ITEM] = { body: ANSWER }
+        let release!: () => void
+        d.world.processHolds.push({ command: 'make add-worktree BRANCH=landing-fix AT=abc123', hold: new Promise<void>(r => (release = r)) })
+        d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
+        await startSession($, d, surface)
+        d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
+        await d.clock.advance(500)
+        // the clear ends the conversation while the worktree command runs: the mark in hand is what session.end reads
+        await $.session.end({ reason: 'clear', sessionId: d.world.sessionId } as any)
+        d.wipeState()
+        release()
+        await d.clock.settle()
+        expect(told(d)).toHaveLength(1)
+        expect(marksWritten(d).at(-1)).toBeNull()
+        // the new conversation starts: the restore must not bring the dropped mark back
+        const from = d.stateWrites.length
+        d.world.sessionId = `${CLEARED_SESSION_ID}-gap`
+        await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: d.world.sessionId, transcript_path: '/work/cleared-gap.jsonl' })
+        await d.clock.settle()
+        expect(d.stateWrites.slice(from).filter((w: any) => w.key === 'queueJobTaking').map((w: any) => w.value).every((v: unknown) => v === null)).toBe(true)
+        expect(told(d)).toHaveLength(1)
+        expect(makeRuns(d)).toHaveLength(1)
+        expect(calls(d, 'POST')).toHaveLength(1)
+      })
+
+      test('a takeover records its taker, and the taker itself is not stopped when its mark goes missing meanwhile', async ($, on) => {
+        answerEngineClear(on)
+        const d = dashboard(on, { stateSteps: true })
+        d.world.takeReplies[ITEM] = { body: ANSWER }
+        d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
+        d.seedState('queueJobTaking', { ...RETRYING, retry_at: NOW + 5_000 })
+        await startSession($, d, surface)
+        d.holdApi(3_000)
+        await d.clock.advance(5_200)
+        d.wipeState()
+        d.holdApi(0)
+        await d.clock.advance(6_000)
+        await d.clock.settle()
+        const taken = d.stateWrites.filter((w: any) => w.key === 'queueTakenOver').map((w: any) => w.value)
+        expect(taken[0]).toHaveLength(1)
+        expect(taken[0][0].item_id).toBe(ITEM)
+        const owner = marksWritten(d).find((m: any) => m !== null).owner
+        expect(taken[0][0].by).toBe(owner)
+        expect(makeRuns(d)).toHaveLength(1)
+        expect(told(d)).toHaveLength(1)
+        expect(calls(d, 'DELETE')).toEqual([])
       })
 
       test('a taken-over job whose worktree is made is carried on even when the repo has cleared its worktree command since', async ($, on) => {

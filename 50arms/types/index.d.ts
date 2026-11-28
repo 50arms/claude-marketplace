@@ -369,6 +369,8 @@ declare module 'claude-code' {
       queueFailuresTold: { item_id: number; error: string }[]
       // the queued jobs this session handed back: the model's claim of one of them is the session's to prepare, and uses the id up; a claim of any other job is the model's own
       queueHandedBack: number[]
+      // the queued jobs a module instance took over from another, with the instance that took each: a copy that finds its mark missing stops only for a job in this list that another instance took; a mark gone for any other reason is written again
+      queueTakenOver: { item_id: number; by: string }[]
       // the ids of this session's sub-agents running now (start adds, stop and their turn's end remove); the title shows the hammer mark while it is non-empty.
       runningAgents: string[]
       // the briefs of the sub-agents that ended in the last few minutes, with the epoch ms each ended; the held-idle Stop check counts their cards as worked for that long.

@@ -83,7 +83,7 @@ import { revokeNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, si
 import { NO_AGENT, signInStep } from './plan/sign-in'
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
-import { busyToast, claimHoldsNothing, claimUnreadToast, claimedItemOf, commandFailed, failureWasTold, jobBusyHandedBack, jobHandedBack, jobPrompt, leaveFailedToast, leftToast, markWritable, notTakenToast, NOT_HOLDER, OWNER_SILENT_MS, PROMPT_REFUSED, takePath, takePlanOf, takeoverOf, takingJobOf, withFailureTold, withHandedBack, withoutFailuresOf, withoutHandedBack, WORKTREE_COMMAND_TIMEOUT_MS, worktreePathOf, type FailureTold, type Hand, type Judged, type Offer, type TakingJob, type Watch } from './ready/offer'
+import { busyToast, claimHoldsNothing, claimUnreadToast, claimedItemOf, commandFailed, failureWasTold, jobBusyHandedBack, jobHandedBack, jobPrompt, leaveFailedToast, leftToast, markWritable, notTakenToast, NOT_HOLDER, OWNER_SILENT_MS, PROMPT_REFUSED, takePath, takePlanOf, takeoverOf, takingJobOf, withFailureTold, withHandedBack, withoutFailuresOf, withoutHandedBack, withoutTakenOver, withTakenOver, lostToTakeover, WORKTREE_COMMAND_TIMEOUT_MS, worktreePathOf, type FailureTold, type Hand, type Judged, type Offer, type TakenOver, type TakingJob, type Watch } from './ready/offer'
 import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_STALL_CHECK_MS, RELAY_STALL_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
 import { BROWSER_MISSING_LINE, BROWSER_SERVER, createdTab, failureOf, holdsPlanTab, paneState, type BrowserResult, type BrowserTool } from './relay/browser'
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
@@ -244,6 +244,8 @@ const queueJobTaking = atom({ plugin: '50arms', key: 'queueJobTaking' } as const
 const queueFailuresTold = atom({ plugin: '50arms', key: 'queueFailuresTold' } as const, [] as FailureTold[])
 // the queued jobs this session handed back, by item id (ready/offer.ts, withHandedBack): the model's claim of one of them is the session's to prepare; a claim of any other job (a holder reading its job back) is left alone
 const queueHandedBack = atom({ plugin: '50arms', key: 'queueHandedBack' } as const, [] as number[])
+// the queued jobs a module instance took over from another, with the taker (ready/offer.ts, TakenOver): a copy that finds its mark missing stops only for a job another instance took over from it
+const queueTakenOver = atom({ plugin: '50arms', key: 'queueTakenOver' } as const, [] as TakenOver[])
 // the events issued to the session that asked to be acknowledged and whose acknowledgement call has not succeeded (relay/outbox.ts, shouldDropResend). $.state, so a reload keeps it.
 const ackInFlight = atom({ plugin: '50arms', key: 'ackInFlight' } as const, [] as AckInFlight)
 
@@ -313,6 +315,7 @@ async function carryAcrossConversation($: any): Promise<void> {
     queueJobTaking: read($, queueJobTaking),
     queueFailuresTold: read($, queueFailuresTold),
     queueHandedBack: read($, queueHandedBack),
+    queueTakenOver: read($, queueTakenOver),
     behavior: read($, behavior),
   }
   carriedState = Object.fromEntries(await Promise.all(Object.entries(reads).map(async ([key, value]) => [key, await value] as const)))
@@ -376,9 +379,11 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, spawnedAgents, () => carried.spawnedAgents),
     update($, relayOutbox, () => carried.relayOutbox),
     update($, ackInFlight, () => carried.ackInFlight),
-    update($, queueJobTaking, () => carried.queueJobTaking),
+    // the module's own mark is the authority over the value read at session.end: a write this instance made in the gap (the first mark of an offer) stays, and a mark it dropped in the gap stays dropped
+    update($, queueJobTaking, () => markToRestore(carried.queueJobTaking)),
     update($, queueFailuresTold, () => carried.queueFailuresTold),
     update($, queueHandedBack, () => carried.queueHandedBack),
+    update($, queueTakenOver, () => carried.queueTakenOver),
     update($, behavior, () => carried.behavior),
   ])
   // a fresh conversation (or another session taking this one's place) in the same process: what the dashboard shows may have moved while they were in the old one. Loaded from here, so
@@ -2834,6 +2839,8 @@ async function resumeQueueJob($: any, timerFired = false): Promise<void> {
     return
   }
   const job = takingJobOf(await read($, queueJobTaking))
+  const now = await $.clock.now()
+  // the last await is above: from this check to the work there is none, so no offer or claim can take the module between the decision and the work
   if (queueJobBusy !== null) {
     if (timerFired) resumeAfter($, RESUME_BUSY_MS, true)
     return
@@ -2842,7 +2849,7 @@ async function resumeQueueJob($: any, timerFired = false): Promise<void> {
     watched = null
     return
   }
-  const step = takeoverOf(job, INSTANCE, await $.clock.now(), watched, timerFired, resumeTimerPending)
+  const step = takeoverOf(job, INSTANCE, now, watched, timerFired, resumeTimerPending)
   if (step.kind === 'waiting') return
   if (step.kind === 'retry') return resumeAfter($, step.waitMs)
   if (step.kind === 'watch') {
@@ -2854,29 +2861,51 @@ async function resumeQueueJob($: any, timerFired = false): Promise<void> {
   await workQueueJob($, job, null, true, step.kind === 'take' ? { owner: job.owner, at: job.at } : null)
 }
 
-// The job in hand written with this instance as owner, at the time of the write, unless another instance's mark stands in the way: that mark is returned, and the job is its owner's. A write after the first one
-// that finds the mark another instance's (it took the job over) says this instance lost the job. `retryAt`: the mark says its owner waits on a retry from then, so any module may take the job over once it has passed.
+// The mark this instance last wrote and has not dropped, as the module's own copy: the authority `restoreCarried` writes back over the value read at `session.end` (a /clear's carry gap overwrites what a loop wrote in between)
+let ownMark: TakingJob | null = null
+
+// What a /clear's restore writes for the mark: this instance's own copy when it has one, else the value read at `session.end` unless that is a mark this instance has dropped since (a restored ghost would tell the job twice)
+function markToRestore(carried: unknown): unknown {
+  if (ownMark !== null) return ownMark
+  const mark = takingJobOf(carried)
+  return mark !== null && mark.owner === INSTANCE ? null : carried
+}
+
+// The job in hand written with this instance as owner, at the time of the write, unless another instance's mark stands in the way: that mark is returned, and the job is its owner's. A write after the first one that
+// finds its mark gone stops only when another instance took the job over from this one (`queueTakenOver`): a mark that went missing for any other reason (a /clear's carry gap, an older module clearing it) is written again,
+// the claim having landed. `first`: the first write of this module's work on the job; a takeover's first write records the taker, a fresh one forgets a takeover of an earlier round.
+// `retryAt`: the mark says its owner waits on a retry from then, so any module may take the job over once it has passed.
 async function keepMark($: any, hand: Hand, over: Judged | null, first: boolean, retryAt: number | null = null): Promise<{ kept: true } | { kept: false; by: TakingJob | null }> {
   const now = await $.clock.now()
+  const lost = !first && lostToTakeover(await read($, queueTakenOver), hand.item_id, INSTANCE)
   let blocker = null as { by: TakingJob | null } | null
+  let written = null as TakingJob | null
   await update($, queueJobTaking, cur => {
-    const can = markWritable(cur, INSTANCE, hand.item_id, over, first)
+    const can = markWritable(cur, INSTANCE, hand.item_id, over, lost)
     if (!can.ok) {
       blocker = { by: can.by }
       return cur
     }
-    return { item_id: hand.item_id, urgent: hand.urgent, prepared: hand.prepared, owner: INSTANCE, at: now, retry_at: retryAt }
+    written = { item_id: hand.item_id, urgent: hand.urgent, prepared: hand.prepared, owner: INSTANCE, at: now, retry_at: retryAt }
+    return written
   })
-  return blocker === null ? { kept: true } : { kept: false, by: blocker.by }
+  if (blocker !== null) return { kept: false, by: (blocker as { by: TakingJob | null }).by }
+  ownMark = written
+  if (first) await update($, queueTakenOver, cur => (over !== null ? withTakenOver(cur, hand.item_id, INSTANCE) : withoutTakenOver(cur, hand.item_id)))
+  return { kept: true }
 }
 
 // The owner's sign of life before a call that may wait on the network (the hand-back's DELETE): its own mark of the job gets a new `at`, and a mark that is not its own is left as it is
 async function touchMark($: any, itemId: number): Promise<void> {
   const now = await $.clock.now()
+  let touched = null as TakingJob | null
   await update($, queueJobTaking, cur => {
     const mark = takingJobOf(cur)
-    return mark !== null && mark.owner === INSTANCE && mark.item_id === itemId ? { ...mark, at: now, retry_at: null } : cur
+    if (mark === null || mark.owner !== INSTANCE || mark.item_id !== itemId) return cur
+    touched = { ...mark, at: now, retry_at: null }
+    return touched
   })
+  if (touched !== null) ownMark = touched
 }
 
 // This instance's mark of job `itemId` gone: the job is told, left or refused. Another instance's mark, and this instance's mark of another job, are not this job's to clear.
@@ -2885,6 +2914,7 @@ async function dropMark($: any, itemId: number): Promise<void> {
     const mark = takingJobOf(cur)
     return mark?.owner === INSTANCE && mark.item_id === itemId ? null : cur
   })
+  if (ownMark?.item_id === itemId) ownMark = null
 }
 
 // One queued job in hand, from the claim to the model's prompt. `claimed` is the answer of a claim the model made itself (null: this module claims it). `hand` says how far the job got (`prepared`: the worktree is made),
@@ -2910,7 +2940,7 @@ async function workQueueJob($: any, hand: Hand, claimed: unknown, resumed: boole
   try {
     const first = await keepMark($, job, over, true)
     if (!first.kept) {
-      // (a first write is refused only by a mark that stands in the way)
+      // (a first write is refused by a mark that stands in the way, or, for a takeover, because the mark it judged has vanished: by is null and there is nothing to do)
       const by = first.by
       if (by !== null) {
         if (claimed !== null) await leaveBusy(by.item_id, `this session has queued job ${by.item_id} in hand`)
