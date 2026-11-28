@@ -53,7 +53,10 @@ export function isTight(budget: number | null, running: number, reserved: number
 // What the plan-workflow skill quotes (see the header): the refusal the model reads starts with this.
 export const REFUSAL_PREFIX = 'Usage pacing:'
 
-// What a paced session does: record its state on its card, pause on `pacing`, and wait; no work of its own. 50 Arms wakes it when pacing frees slots.
+// How long 50 Arms holds a slot for a queued ticket once it is ready (DX-8451, DEC-3538 v2); the refusal names it, the held-slot wording is pinned to it.
+export const TICKET_HOLD_MINUTES = 10
+
+// What a paced session does: record its state on its card, pause on `pacing`, and wait; no work of its own. 50 Arms messages it when its queue ticket is ready.
 export const PACED_STOP = 'Record any unrecorded state on the card it concerns, pause with PUT /api/plan-sessions/me/pause {waits_on: "pacing"}, do not do the work yourself, and wait until you are told to continue.'
 
 // The refusal the model reads, worded from the cause 50 Arms' own claim answer names (`refusal`, from its `refusalOf`), never re-derived here. Refusal (section
@@ -69,7 +72,7 @@ export function denyReason(v: PacingVerdict | null, why: 'level' | 'budget' | 'r
     ticket.state === 'ready'
       ? `Your ticket ${ticket.id} is ready, but its hold cannot be used now: 50 Arms returns it to the queue and messages this session when it is ready again.`
       : `Your spawn is queued as ticket ${ticket.id}, place ${ticket.place} in the queue for this account. 50 Arms messages this session when the ticket is ready, ` +
-        'and holds the slot for it for 10 minutes once it is ready.'
+        `and holds the slot for it for ${TICKET_HOLD_MINUTES} minutes once it is ready.`
   return `${head} ${queue} ${PACED_STOP}`
 }
 
@@ -78,8 +81,8 @@ function causeOf(v: PacingVerdict | null, why: 'level' | 'budget' | 'reserved'):
   if (why === 'level') return v === null ? 'this account is not on pace' : `this account is ${v.level.replace('_', ' ')}`
   if (why === 'budget') return v === null ? 'no sub-agent slot is free on this account' : `${v.subAgents} sub-agent(s) already run on this account against ${budgetOf(v)}`
   return v === null
-    ? 'a free slot is held for sessions that waited longer'
-    : `${v.subAgents} sub-agent(s) run on this account and ${v.reservedAgents} slot(s) are held for sessions that waited longer, against ${budgetOf(v)}`
+    ? 'tickets wait ahead of this spawn for a free slot'
+    : `${v.subAgents} sub-agent(s) run on this account and ${v.reservedAgents} slot(s) are held for tickets ahead of this spawn, against ${budgetOf(v)}`
 }
 
 function budgetOf(v: PacingVerdict): string {

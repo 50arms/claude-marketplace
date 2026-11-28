@@ -197,12 +197,12 @@ describe('the claim answer, old and new', () => {
 
   test('a granted ready ticket with no figures is granted with no pacing, and carries the token it was claimed with', () => {
     const granted = { account: null, level: null, budget: null, resets_at: null, main_agents: null, sub_agents: null, reserved_agents: null, line: null, spend: null, limits: null, worst_limit: null, reason: null, claimed: true, claim_id: 'claim-4', refusal: null, ticket: null }
-    expect(parseClaim(granted, TOKEN)).toEqual({ kind: 'claimed', pacing: null, claimId: 'claim-4', clientToken: TOKEN })
+    expect(parseClaim(granted, TOKEN)).toEqual({ kind: 'claimed', pacing: null, clientToken: TOKEN })
   })
 
   test('a granted claim with figures keeps them', () => {
     const claim = parseClaim({ ...figures, claimed: true, claim_id: 'claim-5', refusal: null }, TOKEN)
-    expect(claim).toMatchObject({ kind: 'claimed', claimId: 'claim-5', clientToken: TOKEN })
+    expect(claim).toMatchObject({ kind: 'claimed', clientToken: TOKEN })
     expect(claim.kind === 'claimed' && claim.pacing?.verdict.budget).toBe(3)
   })
 })

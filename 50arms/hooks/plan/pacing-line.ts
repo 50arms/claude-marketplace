@@ -223,7 +223,7 @@ const REFUSAL_CAUSES: readonly string[] = ['level', 'budget', 'reserved']
 export type ClaimTicket = { id: string; place: number; state: 'waiting' | 'ready' }
 export type Claim =
   // `pacing` is null for a granted ready ticket, whose answer reads no account figures (DEC-3533 v4)
-  | { kind: 'claimed'; pacing: Pacing | null; claimId: string; clientToken: string }
+  | { kind: 'claimed'; pacing: Pacing | null; clientToken: string }
   // `pacing` is null for a refusal whose answer reads no figures (a ready ticket)
   | { kind: 'refused'; pacing: Pacing | null; why: RefusalCause; ticket: ClaimTicket | null }
   | { kind: 'unknown' }
@@ -247,8 +247,15 @@ function ticketOf(body: any): ClaimTicket | null | 'invalid' {
 
 // A client claim token, one per claim: a claim the deadline cut off is released by it (DEC-3533), so it never holds a phantom slot. Unique enough per
 // session; it names nothing secret.
-export function newClaimToken(): string {
+function newClaimToken(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+}
+
+// A refused claim: its cause must be one 50 Arms names, else the claim fails closed.
+function refusedBy(body: any, pacing: Pacing | null, ticket: ClaimTicket | null): Claim {
+  return REFUSAL_CAUSES.includes(body.refusal)
+    ? { kind: 'refused', pacing, why: body.refusal, ticket }
+    : { kind: 'failed', failure: 'the claim answer refuses without naming a valid cause' }
 }
 
 export function parseClaim(body: any, clientToken: string): Claim {
@@ -257,24 +264,18 @@ export function parseClaim(body: any, clientToken: string): Claim {
   if (ticket === 'invalid') return { kind: 'failed', failure: 'the claim answer has a malformed ticket' }
   if (body.claimed === true) {
     if (typeof body.claim_id !== 'string' || body.claim_id === '') return { kind: 'failed', failure: 'the claim answer has no valid outcome' }
-    if (figuresAbsent(body)) return { kind: 'claimed', pacing: null, claimId: body.claim_id, clientToken }
+    if (figuresAbsent(body)) return { kind: 'claimed', pacing: null, clientToken }
     const pacing = parsePacing(body)
     if (pacing === null || 'error' in pacing) return { kind: 'failed', failure: pacing === null ? 'the claim answer has no valid outcome' : pacing.error }
-    return { kind: 'claimed', pacing, claimId: body.claim_id, clientToken }
+    return { kind: 'claimed', pacing, clientToken }
   }
   if (body.claimed === false && body.claim_id === null) {
-    if (figuresAbsent(body)) {
-      return REFUSAL_CAUSES.includes(body.refusal)
-        ? { kind: 'refused', pacing: null, why: body.refusal, ticket }
-        : { kind: 'failed', failure: 'the claim answer refuses without naming a valid cause' }
-    }
+    if (figuresAbsent(body)) return refusedBy(body, null, ticket)
     const pacing = parsePacing(body)
     // pacing does not see the account (`reason` set): nothing to cap, nothing claimed
     if (pacing === null) return { kind: 'unknown' }
     if ('error' in pacing) return { kind: 'failed', failure: pacing.error }
-    return REFUSAL_CAUSES.includes(body.refusal)
-      ? { kind: 'refused', pacing, why: body.refusal, ticket }
-      : { kind: 'failed', failure: 'the claim answer refuses without naming a valid cause' }
+    return refusedBy(body, pacing, ticket)
   }
   return { kind: 'failed', failure: 'the claim answer has no valid outcome' }
 }
@@ -368,7 +369,7 @@ export function reportClaimFailure(env: PacingEnv, failure: string): void {
   toastOnce(env, 'claim', 'Usage pacing could not claim a slot, so the spawn was refused (the budget is a strict cap)', failure)
 }
 
-// The claim given back: the host refused the spawn after the slot was taken. Never rejects; a claim not given back lapses in 50 Arms
+// The claim given back: a spawn the host refused after its slot was taken, or a claim the deadline cut off before its answer came (50 Arms may have taken the slot). Never rejects; a claim not given back lapses in 50 Arms
 // (AGENT_CLAIM_LAPSE_MS, 60 s), which stays the recovery. a give-back that fails is told once per distinct text (the same rule as
 // reportClaimFailure), never silently: an error answer, an unreachable server, a timeout or a throw. A signed-out answer and `{released:false}`
 // (a 200, normal) stay silent; a good give-back clears the slot, so the same failure after it is told again.

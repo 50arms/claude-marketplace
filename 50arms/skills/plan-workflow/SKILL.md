@@ -339,7 +339,7 @@ never stays active just to wait.
    cards?, expires_in_minutes?}`. `reason` is shown to the operator beside your session; `ends_when`
    says what would end the wait. `waits_on` is required, the event you wait for:
    - `pacing`: usage pacing refused your sub-agents (no slot to start one, the account over pace or at its
-     sub-agent budget). Ends when pacing lets the account start agents again.
+     sub-agent budget). Ends on the ticket-ready message from 50 Arms for its queued spawn, or on the critical stop's resume.
    - `person`: an open problem, an approval or any answer only a person gives (409
      `person_wait_without_problem` without an open problem on your plan or card: file it first).
    - `dependency`: other cards, their ids in `cards` (required); ends when every one is Done or

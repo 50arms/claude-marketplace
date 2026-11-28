@@ -334,7 +334,7 @@ describe('the agent.spawn hook', () => {
   test('a claim 50 Arms refused for held slots is worded as held slots, not as a full budget', async ($, on) => {
     const d = await session($, on, { pacingLine: { body: wire({ budget: 3, sub_agents: 2, reserved_agents: 1 }) } })
     const r = await spawn($)
-    expect(r.deny).toMatch(/1 slot\(s\) are held for sessions that waited longer/)
+    expect(r.deny).toMatch(/1 slot\(s\) are held for tickets ahead of this spawn/)
     expect(r.deny).not.toMatch(/already run/)
     expect(d.claimsAllowed).toEqual([])
   })
@@ -1008,7 +1008,7 @@ describe('failures of the guard itself', () => {
     let started = false
     const r = await spawnGuard(env)(e, async () => { started = true; return { model: 'm', agentId: 'a' } as any })
     expect(started).toBe(false)
-    expect(r.deny).toMatch(/1 sub-agent\(s\) run on this account and 1 slot\(s\) are held for sessions that waited longer/)
+    expect(r.deny).toMatch(/1 sub-agent\(s\) run on this account and 1 slot\(s\) are held for tickets ahead of this spawn/)
     expect(r.deny).not.toMatch(/already run/)
   })
 
@@ -1067,7 +1067,7 @@ describe('failures of the guard itself', () => {
     }
     expect(await deny('budget')).toMatch(/1 sub-agent\(s\) already run on this account against budget 3/)
     expect(await deny('level')).toMatch(/this account is on pace/)
-    expect(await deny('reserved')).toMatch(/slot\(s\) are held for sessions that waited longer/)
+    expect(await deny('reserved')).toMatch(/slot\(s\) are held for tickets ahead of this spawn/)
   })
 
   test('a refused claim that names no valid cause fails closed as a failed claim', async () => {
