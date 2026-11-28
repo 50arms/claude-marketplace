@@ -62,41 +62,54 @@ export const commandFailed = (argv: readonly string[], message: string) => `the 
 
 // The longest the repo's worktree command may run: the engine's own limit for one process
 export const WORKTREE_COMMAND_TIMEOUT_MS = 600_000
-// A reloaded plugin does not end the old module's work, in the same process: the old module's in-flight claim, command and prompt go on. Its job in hand is its mark's, and an owner in this process is alive. An owner in
-// another process (the session was restarted) is gone, but a mark's age says so only after the longest a step can take: every step rewrites the mark (`at`) before a wait of at most the command's limit.
+// A reloaded plugin does not end the old module's work: its in-flight worktree command and prompt go on, but its timers and clock waits are cancelled (a reload unloads its environment). The new module then sees a mark
+// the old one wrote and cannot tell whether that owner still works it, so it judges by signs of life (DEC-3425): a mark waiting on a retry says so (`retry_at`), and any other mark is judged on the reader's OWN timer, as
+// long as the longest step can take (the command's limit plus a minute, since the owner rewrites its mark at every step), never by comparing the mark's time with the clock.
 export const OWNER_SILENT_MS = WORKTREE_COMMAND_TIMEOUT_MS + 60_000
 
-// The job a module has in hand, kept in `$.state` from before its claim until the model is told it or it is left. `owner` is the instance id the module that wrote it minted when it loaded, `process` the token of the process it
-// runs in, `at` the time of its last write. `prepared` is the worktree once the repo's command made it (a module that carries the job on claims it again, which answers the holder the job once more, and does not run the
-// command again), `urgent` how the model's prompt is issued.
+// The job a module has in hand, kept in `$.state` from before its claim until the model is told it or it is left. `owner` is the instance id the module that wrote it minted when it loaded, `at` the time of its last write
+// (the owner rewrites it at each step: before the claim, before the command, after the worktree, when it arms a retry). `retry_at` is when a claim that got no answer is made again (null: the owner is working, not waiting). `prepared`
+// is the worktree once the repo's command made it (a module that carries the job on claims it again, which answers the holder the job once more, and does not run the command again), `urgent` how the model's prompt is issued.
 export type Prepared = { path: string; worktree: Worktree }
-export type TakingJob = { item_id: number; urgent: boolean; prepared: Prepared | null; owner: string; process: string; at: number }
+export type TakingJob = { item_id: number; urgent: boolean; prepared: Prepared | null; owner: string; at: number; retry_at: number | null }
 // what a module has in hand before it writes the mark
 export type Hand = Pick<TakingJob, 'item_id' | 'urgent' | 'prepared'>
 
 // The mark a module wrote, or null when it is not one this module writes: a mark of another shape belongs to an older plugin's module, which may still be working the job
 export function takingJobOf(x: any): TakingJob | null {
-  if (x === null || typeof x !== 'object' || !isId(x.item_id) || typeof x.urgent !== 'boolean' || !isText(x.owner) || !isText(x.process) || typeof x.at !== 'number') return null
+  if (x === null || typeof x !== 'object' || !isId(x.item_id) || typeof x.urgent !== 'boolean' || !isText(x.owner) || typeof x.at !== 'number') return null
+  if (x.retry_at !== null && typeof x.retry_at !== 'number') return null
   const p = x.prepared
   if (p !== null && (typeof p !== 'object' || !isText(p.path) || !isText(p.worktree?.branch) || !isText(p.worktree?.commit))) return null
-  return { item_id: x.item_id, urgent: x.urgent, prepared: p, owner: x.owner, process: x.process, at: x.at }
+  return { item_id: x.item_id, urgent: x.urgent, prepared: p, owner: x.owner, at: x.at, retry_at: x.retry_at }
 }
 
-// How long the module instance `owner` (in process `process`) has to wait before it may act on the mark `job`: nothing for its own mark; never (Infinity) for another instance of this process, which is running; for an owner
-// of another process, until it has been silent for OWNER_SILENT_MS (0 once it has).
-export function ownerWaitMs(job: TakingJob, owner: string, process: string, now: number): number {
-  if (job.owner === owner) return 0
-  if (job.process === process) return Infinity
-  return Math.max(0, job.at + OWNER_SILENT_MS - now)
+// The mark a reader saw and is waiting on: the job, its owner and the `at` it saw
+export type Watch = { item_id: number; owner: string; at: number }
+
+// What the module `owner` does with the mark `job` it finds (DEC-3425):
+//   own      it wrote it (a claim it retries): it carries on
+//   take     the owner is gone: a mark waiting on a retry whose `retry_at` has passed (no command runs behind it, and a reload cancelled the owner's timer), or one the reader has watched for the whole window with its own
+//            timer (`timerFired`) and whose `at` has not changed
+//   retry    a mark waiting on a retry that is not due: look again in `waitMs`
+//   watch    another instance's mark the reader has not watched yet, or whose `at` moved: note it and arm the timer
+//   waiting  the reader's timer for this very mark is armed: nothing to do before it fires
+export type Takeover = { kind: 'own' | 'take' | 'watch' | 'waiting' } | { kind: 'retry'; waitMs: number }
+export function takeoverOf(job: TakingJob, owner: string, now: number, watched: Watch | null, timerFired: boolean): Takeover {
+  if (job.owner === owner) return { kind: 'own' }
+  if (job.retry_at !== null) return now >= job.retry_at ? { kind: 'take' } : { kind: 'retry', waitMs: job.retry_at - now }
+  const same = watched !== null && watched.item_id === job.item_id && watched.owner === job.owner && watched.at === job.at
+  if (!same) return { kind: 'watch' }
+  return timerFired ? { kind: 'take' } : { kind: 'waiting' }
 }
 
 // Whether the module `owner` may write its job in hand, `itemId`, over the mark `cur`: over none, and over one of another shape (never read, so never kept from a new job). Its own mark of another job stands in the way (that job's
-// claim is unanswered, or it is in hand) and so does a mark another instance wrote, which is the blocker the answer names, unless `takingOver` (the module carries that job on) and its owner is gone (`ownerWaitMs` is 0).
-export function markWritable(cur: unknown, owner: string, process: string, itemId: number, now: number, takingOver: boolean): { ok: true } | { ok: false; by: TakingJob } {
+// claim is unanswered, or it is in hand) and so does a mark another instance wrote, which is the blocker the answer names, unless `takingOver` (the module carries that very job on after `takeoverOf` said take).
+export function markWritable(cur: unknown, owner: string, itemId: number, takingOver: boolean): { ok: true } | { ok: false; by: TakingJob } {
   const job = takingJobOf(cur)
   if (job === null) return { ok: true }
   if (job.owner === owner) return job.item_id === itemId ? { ok: true } : { ok: false, by: job }
-  return takingOver && ownerWaitMs(job, owner, process, now) === 0 ? { ok: true } : { ok: false, by: job }
+  return takingOver && job.item_id === itemId ? { ok: true } : { ok: false, by: job }
 }
 
 // The jobs this session handed back, whose claim by the model is the session's to make the worktree for: newest HANDED_BACK_MAX kept. A claim of any other job (a holder reading its job back) is the model's own.
@@ -137,6 +150,12 @@ function jobLabel(itemId: number, answer: any): string {
 
 export function jobHandedBack(itemId: number, answer: unknown, error: string): string {
   return `50 Arms assigned this session ${jobLabel(itemId, answer)}, and the session claimed it, but could not prepare it: ${error}. The session handed the job back to the queue, so it no longer holds it: do not work it unless you claim it again. If the cause is on this machine (a damaged install, a stale worktree, a missing tool), repair it now, then claim the job again with \`50arms_api\` \`POST ${takePath(itemId)}\` (no body): the first claim wins, and a refusal names the session that holds it. A refusal \`repo_mismatch\` means this session is not on the ready list of the job's repo (its ready mark ended when it claimed the job): load the \`50arms:ready\` skill to join the list again, then claim. Once the claim lands the session makes the worktree and tells you the job, as it did the first time: never make the worktree yourself. If the cause is not on this machine, tell the person what failed.`
+}
+
+// What the model is told when its claim of a handed-back job could not be worked because the session has another job in hand (DEC-3425): the claim had landed, so the job was handed back; the model waits for the job in
+// hand, whose prompt is coming, and never claims this one again at once (a session holds one job: the claim would be refused, or handed back again).
+export function jobBusyHandedBack(itemId: number, answer: unknown, busyWith: number): string {
+  return `50 Arms assigned this session ${jobLabel(itemId, answer)}, and you claimed it, but the session is still preparing queued job ${busyWith}, so it handed this job back to the queue. Wait for the prompt that tells you queued job ${busyWith} and work that job: do not claim queued job ${itemId} again now. 50 Arms offers it again when the session is free.`
 }
 
 // The failures already told to the model, one entry per job and error, so an identical failure at the next offer of the same job wakes the session no more. The newest FAILURES_TOLD_MAX are kept.

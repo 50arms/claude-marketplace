@@ -6,7 +6,7 @@ import "./run-tests-with-npm-test.generated"
 // CP-181: a reload keeps the job in hand. The reloaded module claims it again (the holder's claim answers the job once more) and carries on; it hands the job back only when its worktree cannot be prepared.
 import { describe, expect } from 'claude-code/testing'
 
-import { claimedItemOf, markWritable, NOT_HOLDER, OWNER_SILENT_MS, ownerWaitMs, withHandedBack, withoutHandedBack, HANDED_BACK_MAX, type Offer, type TakingJob } from '../hooks/ready/offer'
+import { claimedItemOf, markWritable, NOT_HOLDER, OWNER_SILENT_MS, takeoverOf, withHandedBack, withoutHandedBack, HANDED_BACK_MAX, type Offer, type TakingJob } from '../hooks/ready/offer'
 import { fromPending, toPending } from '../hooks/relay/outbox'
 import { STALE_PENDING_DETAIL } from '../hooks/relay/text'
 import { test, relayPhase, SURFACES, dashboard, startSession } from './plan-kit'
@@ -19,12 +19,10 @@ const API = 'mcp__plugin_50arms_platform__50arms_api'
 // the harness clock's start
 const NOW = Date.parse('2026-10-03T08:00:00.000Z')
 // the mark a module instance keeps for the job in hand (queueJobTaking): what a reloaded module finds. One whose owner wrote it long ago is gone; one written just now may still be working
-// (an owner of another process, which a restart ended: gone once it has been silent long enough)
-const GONE = { item_id: ITEM, urgent: false, prepared: null, owner: 'previous-module', process: 'another-process', at: NOW - OWNER_SILENT_MS - 1_000 }
-const LIVE = { ...GONE, at: NOW }
-// the old module instance of this process, which a reload does not end: running however long it has been silent
-const THIS_PROCESS = 'this-process'
-const RUNNING = { ...GONE, process: THIS_PROCESS }
+// the old module's mark while it may still be working the job (its command or prompt survive a reload, its timers do not): judged on the reader's own timer
+const LIVE = { item_id: ITEM, urgent: false, prepared: null, owner: 'previous-module', at: NOW, retry_at: null }
+// the old module's mark while it waited on a claim's retry, which is due: no command runs behind it, and the reload cancelled its timer
+const RETRYING = { ...LIVE, at: NOW - 1_000, retry_at: NOW - 1 }
 const marksWritten = (d: any) => d.stateWrites.filter((w: any) => w.key === 'queueJobTaking').map((w: any) => w.value)
 const OFFER_TEXT = 'Queued job: take it now with 50arms_api POST /api/dispatch-queue/41/take'
 const TAKE = `/api/dispatch-queue/${ITEM}/take`
@@ -52,28 +50,34 @@ const makeRuns = (d: any) => d.runCalls.filter((argv: string[]) => argv[0] === '
 // the outbox entry a module keeps for an offer record it took and has not delivered (what a reload finds)
 const SAVED = { planId: 23, cursor: 'c1', text: OFFER_TEXT, urgent: false, acks: [], offer: OFFER }
 
-const job = (owner: string, at: number, process = 'other-process', item = ITEM): TakingJob => ({ item_id: item, urgent: false, prepared: null, owner, process, at })
+const job = (owner: string, at: number, retryAt: number | null = null, item = ITEM): TakingJob => ({ item_id: item, urgent: false, prepared: null, owner, at, retry_at: retryAt })
 
-describe('the job in hand and its owner (CP-181)', () => {
-  test("a module may write its job over no mark, its own mark of the same job and one of another shape; never over its own mark of another job or another instance's, unless it takes the job over from an owner of another process that is silent", () => {
-    const me = (cur: unknown, item: number, at: number, over: boolean) => markWritable(cur, 'me', 'my-process', item, at, over)
-    expect(me(null, ITEM, NOW, false)).toEqual({ ok: true })
-    expect(me(job('me', NOW, 'my-process'), ITEM, NOW, false)).toEqual({ ok: true })
-    expect(me({ item_id: ITEM, assignment_id: 7 }, ITEM, NOW, false)).toEqual({ ok: true })
-    // its own mark of another job: that job's claim is unanswered or in hand
-    expect(me(job('me', NOW, 'my-process'), ITEM + 1, NOW, false)).toEqual({ ok: false, by: job('me', NOW, 'my-process') })
-    expect(me(job('old', NOW), ITEM, NOW + OWNER_SILENT_MS * 2, false)).toEqual({ ok: false, by: job('old', NOW) })
-    expect(me(job('old', NOW), ITEM, NOW + OWNER_SILENT_MS - 1, true)).toEqual({ ok: false, by: job('old', NOW) })
-    expect(me(job('old', NOW), ITEM, NOW + OWNER_SILENT_MS, true)).toEqual({ ok: true })
-    // an owner of this process is running: never taken over, however long it has been silent
-    expect(me(job('old', NOW, 'my-process'), ITEM, NOW + OWNER_SILENT_MS * 10, true)).toEqual({ ok: false, by: job('old', NOW, 'my-process') })
+describe('the job in hand and its owner (CP-181, DEC-3425)', () => {
+  test("a module may write its job over no mark, its own mark of the same job and one of another shape; never over its own mark of another job or another instance's, unless it takes that very job over", () => {
+    const me = (cur: unknown, item: number, over: boolean) => markWritable(cur, 'me', item, over)
+    expect(me(null, ITEM, false)).toEqual({ ok: true })
+    expect(me(job('me', NOW), ITEM, false)).toEqual({ ok: true })
+    expect(me({ item_id: ITEM, assignment_id: 7 }, ITEM, false)).toEqual({ ok: true })
+    // its own mark of another job: that job's claim is unanswered, or it is in hand
+    expect(me(job('me', NOW), ITEM + 1, false)).toEqual({ ok: false, by: job('me', NOW) })
+    expect(me(job('old', NOW), ITEM, false)).toEqual({ ok: false, by: job('old', NOW) })
+    expect(me(job('old', NOW), ITEM, true)).toEqual({ ok: true })
+    expect(me(job('old', NOW), ITEM + 1, true)).toEqual({ ok: false, by: job('old', NOW) })
   })
 
-  test('a mark waits only on another instance: never for an instance of this process, and until an owner of another process has been silent for the longest step plus a margin', () => {
-    expect(ownerWaitMs(job('me', NOW, 'my-process'), 'me', 'my-process', NOW)).toBe(0)
-    expect(ownerWaitMs(job('old', NOW, 'my-process'), 'me', 'my-process', NOW + OWNER_SILENT_MS * 10)).toBe(Infinity)
-    expect(ownerWaitMs(job('old', NOW), 'me', 'my-process', NOW)).toBe(OWNER_SILENT_MS)
-    expect(ownerWaitMs(job('old', NOW), 'me', 'my-process', NOW + OWNER_SILENT_MS + 5)).toBe(0)
+  test('the reader takes a mark over by signs of life: its own at once, a retry mark once retry_at has passed, any other mark only after its own timer ran a whole window with at unchanged', () => {
+    const seen = { item_id: ITEM, owner: 'old', at: 100 }
+    expect(takeoverOf(job('me', NOW), 'me', NOW, null, false)).toEqual({ kind: 'own' })
+    // a mark waiting on a retry
+    expect(takeoverOf(job('old', NOW, NOW + 5_000), 'me', NOW, null, false)).toEqual({ kind: 'retry', waitMs: 5_000 })
+    expect(takeoverOf(job('old', NOW, NOW + 5_000), 'me', NOW + 5_000, null, false)).toEqual({ kind: 'take' })
+    // any other mark: not watched yet, however old its time is by the clock
+    expect(takeoverOf(job('old', 100), 'me', NOW + OWNER_SILENT_MS * 100, null, false)).toEqual({ kind: 'watch' })
+    expect(takeoverOf(job('old', 100), 'me', NOW, seen, false)).toEqual({ kind: 'waiting' })
+    expect(takeoverOf(job('old', 100), 'me', NOW, seen, true)).toEqual({ kind: 'take' })
+    // the owner wrote again (it is alive): a new watch, never a takeover
+    expect(takeoverOf(job('old', 200), 'me', NOW, seen, true)).toEqual({ kind: 'watch' })
+    expect(takeoverOf(job('other-owner', 100), 'me', NOW, seen, true)).toEqual({ kind: 'watch' })
   })
 
   test("the model's own claim is a POST of a queue job's take route, and nothing else", () => {
@@ -338,15 +342,19 @@ for (const surface of SURFACES) {
         expect(marksWritten(d)).toEqual([])
       })
 
-      test('the old module that stays silent for longer than any step takes is gone: the reloaded module takes the job over, claims it again, makes its worktree and tells the model once', async ($, on) => {
+      test('the old module that stays silent for a whole window on the reader own timer is gone: the reloaded module takes the job over, claims it again, makes its worktree and tells the model once', async ($, on) => {
         const d = dashboard(on)
         d.world.takeReplies[ITEM] = { body: ANSWER }
         d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
-        d.seedState('queueJobTaking', LIVE)
+        // its time is ancient by the clock, which the reader never compares: only its own timer judges
+        d.seedState('queueJobTaking', { ...LIVE, at: NOW - OWNER_SILENT_MS * 5 })
         await startSession($, d, surface)
         await d.clock.settle()
         expect(calls(d, 'POST')).toEqual([])
-        await d.clock.advance(OWNER_SILENT_MS)
+        await d.clock.advance(OWNER_SILENT_MS - 10_000)
+        await d.clock.settle()
+        expect(calls(d, 'POST')).toEqual([])
+        await d.clock.advance(20_000)
         await d.clock.settle()
         expect(calls(d, 'POST')).toHaveLength(1)
         expect(makeRuns(d)).toHaveLength(1)
@@ -359,7 +367,7 @@ for (const surface of SURFACES) {
         const d = dashboard(on)
         d.world.takeReplies[ITEM] = { body: ANSWER }
         d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
-        d.seedState('queueJobTaking', GONE)
+        d.seedState('queueJobTaking', RETRYING)
         await startSession($, d, surface)
         await d.clock.settle()
         expect(calls(d, 'POST')).toHaveLength(1)
@@ -373,7 +381,7 @@ for (const surface of SURFACES) {
       test('a worktree the previous module already made is not made again', async ($, on) => {
         const d = dashboard(on)
         d.world.takeReplies[ITEM] = { body: ANSWER }
-        d.seedState('queueJobTaking', { ...GONE, prepared: { path: WORKTREE_PATH, worktree: { branch: 'landing-fix', commit: 'abc123' } } })
+        d.seedState('queueJobTaking', { ...RETRYING, prepared: { path: WORKTREE_PATH, worktree: { branch: 'landing-fix', commit: 'abc123' } } })
         await startSession($, d, surface)
         await d.clock.settle()
         expect(makeRuns(d)).toEqual([])
@@ -382,26 +390,34 @@ for (const surface of SURFACES) {
         expect(calls(d, 'DELETE')).toEqual([])
       })
 
-      test('an old module instance of this process is running however long it has been silent: the reloaded module never takes the job over', async ($, on) => {
+      test("a claim that got no answer, then a reload (the old module's retry timer is gone): the new module takes over at retry_at, makes the worktree once, tells the job once, and a later offer is not refused", async ($, on) => {
         const d = dashboard(on)
         d.world.takeReplies[ITEM] = { body: ANSWER }
+        d.world.takeReplies[ITEM + 1] = { body: { ...ANSWER, item_id: ITEM + 1 } }
         d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
-        d.seedState('processId', THIS_PROCESS)
-        d.seedState('queueJobTaking', RUNNING)
+        d.seedState('queueJobTaking', { ...LIVE, retry_at: NOW + 2_000 })
         await startSession($, d, surface)
         await d.clock.settle()
-        await d.clock.advance(OWNER_SILENT_MS * 2)
-        await d.clock.settle()
         expect(calls(d, 'POST')).toEqual([])
+        await d.clock.advance(2_000)
+        await d.clock.settle()
+        expect(calls(d, 'POST')).toHaveLength(1)
+        expect(makeRuns(d)).toHaveLength(1)
+        expect(told(d)).toHaveLength(1)
+        expect(answerIn(told(d)[0]).item_id).toBe(ITEM)
         expect(calls(d, 'DELETE')).toEqual([])
-        expect(makeRuns(d)).toEqual([])
-        expect(told(d)).toEqual([])
+        // the mark is cleared: the session takes the next job
+        d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: { item_id: ITEM + 1 } })
+        await d.clock.settle()
+        expect(d.api.filter((a: any) => a.method === 'POST' && a.path === `/api/dispatch-queue/${ITEM + 1}/take`)).toHaveLength(1)
+        expect(told(d)).toHaveLength(2)
+        expect(d.toasts.some((t: string) => t.includes('is still preparing'))).toBe(false)
       })
 
       test('a taken-over job whose worktree is made is carried on even when the repo has cleared its worktree command since', async ($, on) => {
         const d = dashboard(on)
         d.world.takeReplies[ITEM] = { body: { ...ANSWER, worktree_command: [] } }
-        d.seedState('queueJobTaking', { ...GONE, prepared: { path: WORKTREE_PATH, worktree: { branch: 'landing-fix', commit: 'abc123' } } })
+        d.seedState('queueJobTaking', { ...RETRYING, prepared: { path: WORKTREE_PATH, worktree: { branch: 'landing-fix', commit: 'abc123' } } })
         await startSession($, d, surface)
         await d.clock.settle()
         expect(makeRuns(d)).toEqual([])
@@ -422,6 +438,9 @@ for (const surface of SURFACES) {
         await d.clock.settle()
         expect(d.api.filter((a: any) => a.method === 'POST' && a.path === `/api/dispatch-queue/${ITEM + 1}/take`)).toEqual([])
         expect(d.toasts.some((t: string) => t.includes(`Queued job ${ITEM + 1} was not taken: this session is still preparing queued job ${ITEM}`))).toBe(true)
+        // the mark says its owner waits on a retry, so a reload that cancels the timer cannot strand the job
+        const retrying = marksWritten(d).filter((m: any) => m !== null).at(-1)
+        expect(typeof retrying.retry_at).toBe('number')
         d.world.takeReplies[ITEM] = { body: ANSWER }
         await d.clock.advance(1_000)
         await d.clock.settle()
@@ -459,7 +478,7 @@ for (const surface of SURFACES) {
         d.world.takeReplies[ITEM] = { body: ANSWER }
         d.world.takeReplies[ITEM + 1] = { body: { ...ANSWER, item_id: ITEM + 1 } }
         d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
-        d.seedState('queueJobTaking', GONE)
+        d.seedState('queueJobTaking', RETRYING)
         d.seedState('relayOutbox', [{ ...SAVED, offer: { item_id: ITEM + 1 } }])
         await startSession($, d, surface)
         await d.clock.settle()
@@ -476,9 +495,9 @@ for (const surface of SURFACES) {
         d.relay.push({ cursor: 'c1', text: OFFER_TEXT, urgent: true, offer: OFFER })
         await d.clock.settle()
         const marks = marksWritten(d)
-        const shaped = marks.map((m: any) => (m === null ? null : { ...m, owner: typeof m.owner, process: typeof m.process, at: typeof m.at }))
+        const shaped = marks.map((m: any) => (m === null ? null : { ...m, owner: typeof m.owner, at: typeof m.at }))
         const prepared = { path: WORKTREE_PATH, worktree: { branch: 'landing-fix', commit: 'abc123' } }
-        const mine = (prepared: unknown) => ({ item_id: ITEM, urgent: true, prepared, owner: 'string', process: 'string', at: 'number' })
+        const mine = (prepared: unknown) => ({ item_id: ITEM, urgent: true, prepared, owner: 'string', at: 'number', retry_at: null })
         expect(shaped).toEqual([mine(null), mine(null), mine(prepared), null])
         expect(new Set(marks.filter((m: any) => m !== null).map((m: any) => m.owner)).size).toBe(1)
       })
@@ -487,7 +506,7 @@ for (const surface of SURFACES) {
         const d = dashboard(on)
         d.world.takeReplies[ITEM] = { body: ANSWER }
         d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'no space left on device' }
-        d.seedState('queueJobTaking', GONE)
+        d.seedState('queueJobTaking', RETRYING)
         await startSession($, d, surface)
         await d.clock.settle()
         const left = calls(d, 'DELETE')
@@ -501,7 +520,7 @@ for (const surface of SURFACES) {
         test(`a claim refused ${error}, which holds nothing of the job, hands nothing back: the person is told`, async ($, on) => {
           const d = dashboard(on)
           d.world.takeReplies[ITEM] = { status: 409, body: { error } }
-          d.seedState('queueJobTaking', GONE)
+          d.seedState('queueJobTaking', RETRYING)
           await startSession($, d, surface)
           await d.clock.settle()
           expect(calls(d, 'DELETE')).toEqual([])
@@ -517,7 +536,7 @@ for (const surface of SURFACES) {
           const d = dashboard(on)
           d.world.takeReplies[ITEM] = { status, body: { error: 'refused' } }
           d.world.leaveReply = { status: 403, body: { error: NOT_HOLDER } }
-          d.seedState('queueJobTaking', GONE)
+          d.seedState('queueJobTaking', RETRYING)
           await startSession($, d, surface)
           await d.clock.settle()
           const left = calls(d, 'DELETE')
@@ -660,7 +679,14 @@ for (const surface of SURFACES) {
         expect(makeRuns(d)).toEqual([])
         expect(told(d)).toHaveLength(1)
         expect(told(d)[0]).toContain(`queued job ${ITEM + 1}`)
-        expect(told(d)[0]).toContain(`queued job ${ITEM} in hand`)
+        // it waits for the prompt of the job in hand and does not claim again at once
+        expect(told(d)[0]).toContain(`Wait for the prompt that tells you queued job ${ITEM}`)
+        expect(told(d)[0]).toContain('do not claim')
+        // the model that claims again at once is handed the job back again, and is not woken again
+        await $.tool.call({ ...CLAIM, path: `/api/dispatch-queue/${ITEM + 1}/take` })
+        await d.clock.settle()
+        expect(d.api.filter((a: any) => a.method === 'DELETE' && a.path === `/api/dispatch-queue/${ITEM + 1}/take`)).toHaveLength(2)
+        expect(told(d)).toHaveLength(1)
         // no false "was not taken": the claim had landed
         expect(d.toasts.some((t: string) => t.includes('was not taken'))).toBe(false)
       })

@@ -361,15 +361,14 @@ declare module 'claude-code' {
       // the events issued to the session whose acknowledgement call has not succeeded yet (see AckInFlight): the relay drops a re-send of one the session already holds while its turn runs.
       ackInFlight: AckInFlight
       // the queued job a module instance has in hand, from just before its claim until the model is told it or the job is left (null: none): the job, whether its prompt is urgent, the worktree once it is made, the id of the
-      // instance that owns it, the process it runs in and when it last wrote it. A reload does NOT end the old instance's work, so a reloaded module never acts on a mark another instance of its process owns (that instance is running), and
-      // acts on one of another process only once that owner has been silent for longer than any step takes. A mark A mark of another shape is an older plugin's module's, never read.
-      queueJobTaking: { item_id: number; urgent: boolean; prepared: { path: string; worktree: { branch: string; commit: string } } | null; owner: string; process: string; at: number } | null
+      // instance that owns it, when it last wrote it (`at`, rewritten at every step) and, while its claim waits on a retry, when the retry is due (`retry_at`, else null). A reload does NOT end the old instance's command or prompt but
+      // cancels its timers, so a reloaded module takes a mark over once its `retry_at` has passed, or, for any other mark of another instance, when its own timer has run a whole silence window and `at` has not changed (never by
+      // comparing `at` with the clock). A mark of another shape is an older plugin's module's, never read.
+      queueJobTaking: { item_id: number; urgent: boolean; prepared: { path: string; worktree: { branch: string; commit: string } } | null; owner: string; at: number; retry_at: number | null } | null
       // the failures of a taken job already told to the model, one entry per job and error (the newest few): an identical failure of the same job at its next offer wakes the session no more.
       queueFailuresTold: { item_id: number; error: string }[]
       // the queued jobs this session handed back: the model's claim of one of them is the session's to prepare, and uses the id up; a claim of any other job is the model's own
       queueHandedBack: number[]
-      // the id of this process, minted by the first module instance that needs it: a reload keeps it, a restart starts empty. A mark carrying it belongs to a module instance that is running now.
-      processId: string
       // the ids of this session's sub-agents running now (start adds, stop and their turn's end remove); the title shows the hammer mark while it is non-empty.
       runningAgents: string[]
       // the briefs of the sub-agents that ended in the last few minutes, with the epoch ms each ended; the held-idle Stop check counts their cards as worked for that long.
