@@ -6,7 +6,7 @@ import "./run-tests-with-npm-test.generated"
 // CP-181: a reload keeps the job in hand. The reloaded module claims it again (the holder's claim answers the job once more) and carries on; it hands the job back only when its worktree cannot be prepared.
 import { describe, expect } from 'claude-code/testing'
 
-import { claimedItemOf, markWritable, NOT_HOLDER, OWNER_SILENT_MS, takeoverOf, withHandedBack, withoutHandedBack, HANDED_BACK_MAX, lostToTakeover, withTakenOver, withoutTakenOver, TAKEN_OVER_MAX, type Offer, type TakingJob } from '../hooks/ready/offer'
+import { claimedItemOf, markWritable, NOT_HOLDER, OWNER_SILENT_MS, takeoverOf, withHandedBack, withoutHandedBack, HANDED_BACK_MAX, lostToTakeover, withTakenOver, withoutTakenOver, TAKEN_OVER_MAX, unionTakenOver, unionJobsTold, withJobTold, withoutJobTold, TOLD_MAX, type Offer, type TakingJob } from '../hooks/ready/offer'
 import { fromPending, toPending } from '../hooks/relay/outbox'
 import { STALE_PENDING_DETAIL } from '../hooks/relay/text'
 import { test, relayPhase, SURFACES, dashboard, startSession, answerEngineClear, CLEARED_SESSION_ID } from './plan-kit'
@@ -111,6 +111,22 @@ describe('the job in hand and its owner (CP-181, DEC-3425)', () => {
     expect(claimedItemOf('POST', undefined)).toBeNull()
   })
 
+  test("a /clear's restore keeps every takeover the conversation held and the gap wrote, one entry per job, the newest winning", () => {
+    expect(unionTakenOver([{ item_id: 1, by: 'a' }], [{ item_id: 2, by: 'b' }])).toEqual([{ item_id: 1, by: 'a' }, { item_id: 2, by: 'b' }])
+    expect(unionTakenOver([{ item_id: 1, by: 'a' }], [{ item_id: 1, by: 'b' }])).toEqual([{ item_id: 1, by: 'b' }])
+    expect(unionTakenOver([], [])).toEqual([])
+    const many = Array.from({ length: TAKEN_OVER_MAX }, (_, i) => ({ item_id: i + 1, by: 'x' }))
+    expect(unionTakenOver(many, [{ item_id: 999, by: 'y' }])).toHaveLength(TAKEN_OVER_MAX)
+  })
+
+  test('the told jobs: a restore keeps what the conversation held and the gap told, less a job handed back since; a job handed back leaves the list', () => {
+    expect(unionJobsTold([1, 2], [2, 3], new Set())).toEqual([1, 2, 3])
+    expect(unionJobsTold([1, 2], [3], new Set([2]))).toEqual([1, 3])
+    expect(withJobTold([1, 2], 1)).toEqual([2, 1])
+    expect(withoutJobTold([1, 2], 1)).toEqual([2])
+    expect(withJobTold(Array.from({ length: TOLD_MAX }, (_, i) => i + 1), 999)).toHaveLength(TOLD_MAX)
+  })
+
   test('the handed-back jobs keep the newest, one entry per job', () => {
     expect(withHandedBack([1, 2], 2)).toEqual([1, 2])
     expect(withHandedBack([1, 2], 1)).toEqual([2, 1])
@@ -188,7 +204,7 @@ for (const surface of SURFACES) {
       expect(told(d)[0]).toContain('spawn make ENOENT')
     })
 
-    test('a job prompt the session refuses leaves the job', async ($, on) => {
+    test('a job prompt the session refuses leaves the job, and the job is not on the told list', async ($, on) => {
       const d = dashboard(on)
       d.world.takeReplies[ITEM] = { body: ANSWER }
       d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
@@ -198,6 +214,7 @@ for (const surface of SURFACES) {
       await d.clock.settle()
       expect(calls(d, 'DELETE')).toHaveLength(1)
       expect(told(d)).toEqual([])
+      expect(d.stateWrites.filter((w: any) => w.key === 'queueJobsTold').at(-1)?.value).toEqual([])
     })
 
     test('a leave the dashboard refuses after a failed command tells the person both failures', async ($, on) => {
@@ -284,7 +301,7 @@ for (const surface of SURFACES) {
       expect(told(d)[1]).toContain(`queued job ${ITEM + 1}`)
     })
 
-    test('a job the model was told that then fails again with the same error is told again', async ($, on) => {
+    test('a job already told to the model is not claimed, prepared or told again, even when it is offered again', async ($, on) => {
       const d = dashboard(on)
       d.world.takeReplies[ITEM] = { body: ANSWER }
       d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'shared install damaged' }
@@ -294,12 +311,15 @@ for (const surface of SURFACES) {
       d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
       d.relay.push({ cursor: 'c2', text: OFFER_TEXT, offer: { item_id: ITEM, assignment_id: 8 } })
       await d.clock.settle()
-      d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'shared install damaged' }
+      expect(told(d)).toHaveLength(2)
+      expect(told(d)[1]).toContain(WORKTREE_PATH)
+      const claims = calls(d, 'POST').length
+      const runs = makeRuns(d).length
       d.relay.push({ cursor: 'c3', text: OFFER_TEXT, offer: { item_id: ITEM, assignment_id: 9 } })
       await d.clock.settle()
-      expect(told(d)).toHaveLength(3)
-      expect(told(d)[1]).toContain(WORKTREE_PATH)
-      expect(told(d)[2]).toContain('shared install damaged')
+      expect(told(d)).toHaveLength(2)
+      expect(calls(d, 'POST')).toHaveLength(claims)
+      expect(makeRuns(d)).toHaveLength(runs)
     })
 
     test('a command whose last line is no absolute path is a failed command: the job is left and the model is told', async ($, on) => {
@@ -550,6 +570,46 @@ for (const surface of SURFACES) {
         expect(makeRuns(d)).toHaveLength(1)
         expect(told(d)).toHaveLength(1)
         expect(calls(d, 'DELETE')).toEqual([])
+      })
+
+      test("a ghost mark of another instance for a job already told (brought back by a restore) is dropped: nothing is claimed, prepared or told a second time", async ($, on) => {
+        const d = dashboard(on)
+        d.world.takeReplies[ITEM] = { body: ANSWER }
+        d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
+        d.seedState('queueJobsTold', [ITEM])
+        d.seedState('queueJobTaking', RETRYING)
+        await startSession($, d, surface)
+        await d.clock.settle()
+        expect(calls(d, 'POST')).toEqual([])
+        expect(makeRuns(d)).toEqual([])
+        expect(told(d)).toEqual([])
+        expect(calls(d, 'DELETE')).toEqual([])
+        expect(marksWritten(d).at(-1)).toBeNull()
+      })
+
+      test("a /clear's restore joins the jobs told in the gap to the jobs the conversation held, and what a takeover wrote in the gap is not lost", async ($, on) => {
+        answerEngineClear(on)
+        const d = dashboard(on, { stateSteps: true })
+        d.world.takeReplies[ITEM] = { body: ANSWER }
+        d.world.takeReplies[ITEM + 1] = { body: { ...ANSWER, item_id: ITEM + 1 } }
+        d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
+        await startSession($, d, surface)
+        d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
+        await d.clock.settle()
+        expect(told(d)).toHaveLength(1)
+        await $.session.end({ reason: 'clear', sessionId: d.world.sessionId } as any)
+        d.wipeState()
+        // the gap: another job is told before the new conversation's start restores the old values
+        d.relay.push({ cursor: 'c2', text: OFFER_TEXT, offer: { item_id: ITEM + 1 } })
+        await d.clock.settle()
+        expect(told(d)).toHaveLength(2)
+        const from = d.stateWrites.length
+        d.world.sessionId = `${CLEARED_SESSION_ID}-union`
+        await $.classic.SessionStart({ source: 'clear', cwd: '/work', session_id: d.world.sessionId, transcript_path: '/work/cleared-union.jsonl' })
+        await d.clock.settle()
+        const restored = d.stateWrites.slice(from).filter((w: any) => w.key === 'queueJobsTold').map((w: any) => w.value)
+        expect([...restored[0]].sort()).toEqual([ITEM, ITEM + 1])
+        expect(told(d)).toHaveLength(2)
       })
 
       test('a taken-over job whose worktree is made is carried on even when the repo has cleared its worktree command since', async ($, on) => {

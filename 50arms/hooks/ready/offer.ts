@@ -117,6 +117,20 @@ export const withoutTakenOver = (list: readonly TakenOver[], itemId: number): Ta
 // whether `owner` is a late copy for `itemId`: another instance took the job over from it
 export const lostToTakeover = (list: readonly TakenOver[], itemId: number, owner: string): boolean => list.some(t => t.item_id === itemId && t.by !== owner)
 
+// The union of two lists of takeovers, the first one's entries first, one per job (the newest entry for a job wins), newest TAKEN_OVER_MAX kept: what a /clear's restore writes, since an entry is only ever evidence to keep
+export function unionTakenOver(carried: readonly TakenOver[], gap: readonly TakenOver[]): TakenOver[] {
+  const merged = [...carried, ...gap]
+  return merged.filter((t, i) => merged.findLastIndex(u => u.item_id === t.item_id) === i).slice(-TAKEN_OVER_MAX)
+}
+
+// The job items already told to the model, visible to every module instance (newest TOLD_MAX kept): an item on it is never claimed or told again, which closes a ghost mark of another instance coming back through a restore.
+// A job handed back leaves it, since it is claimed and told afresh.
+export const TOLD_MAX = 20
+export const withJobTold = (ids: readonly number[], itemId: number): number[] => [...ids.filter(i => i !== itemId), itemId].slice(-TOLD_MAX)
+export const withoutJobTold = (ids: readonly number[], itemId: number): number[] => ids.filter(i => i !== itemId)
+// the union of two lists of told items, less the items `left` since (a hand-back in the gap must not be undone by the carried value)
+export const unionJobsTold = (carried: readonly number[], gap: readonly number[], left: ReadonlySet<number>): number[] => [...new Set([...carried, ...gap])].filter(i => !left.has(i)).slice(-TOLD_MAX)
+
 // Whether the module `owner` may write its job in hand, `itemId`, over the mark `cur`. Over no mark: written again, as the job is still the session's, unless `lost` (another instance took the job over from this
 // module, `lostToTakeover`) or the write is itself a takeover (`over`) whose judged mark has vanished (nothing to take over). Over one of another shape (never read, so never kept from a new job). Its own mark of another
 // job stands in the way (that job's claim is unanswered, or it is in hand) and so does a mark another instance wrote, which is the blocker the answer names, unless `over` (the module carries that very job on after

@@ -83,7 +83,7 @@ import { revokeNote, signInApprovedNote, signInDeniedNote, signInExpiredNote, si
 import { NO_AGENT, signInStep } from './plan/sign-in'
 import { classifyText, readWaitAnswer, waitArgs } from './relay/answer'
 import type { RelayEvent, WaitAnswer } from './relay/answer'
-import { busyToast, claimHoldsNothing, claimUnreadToast, claimedItemOf, commandFailed, failureWasTold, jobBusyHandedBack, jobHandedBack, jobPrompt, leaveFailedToast, leftToast, markWritable, notTakenToast, NOT_HOLDER, OWNER_SILENT_MS, PROMPT_REFUSED, takePath, takePlanOf, takeoverOf, takingJobOf, withFailureTold, withHandedBack, withoutFailuresOf, withoutHandedBack, withoutTakenOver, withTakenOver, lostToTakeover, WORKTREE_COMMAND_TIMEOUT_MS, worktreePathOf, type FailureTold, type Hand, type Judged, type Offer, type TakenOver, type TakingJob, type Watch } from './ready/offer'
+import { busyToast, claimHoldsNothing, claimUnreadToast, claimedItemOf, commandFailed, failureWasTold, jobBusyHandedBack, jobHandedBack, jobPrompt, leaveFailedToast, leftToast, markWritable, notTakenToast, NOT_HOLDER, OWNER_SILENT_MS, PROMPT_REFUSED, takePath, takePlanOf, takeoverOf, takingJobOf, withFailureTold, withHandedBack, withoutFailuresOf, withoutHandedBack, withoutTakenOver, withTakenOver, lostToTakeover, unionJobsTold, unionTakenOver, withJobTold, withoutJobTold, WORKTREE_COMMAND_TIMEOUT_MS, worktreePathOf, type FailureTold, type Hand, type Judged, type Offer, type TakenOver, type TakingJob, type Watch } from './ready/offer'
 import { CURSOR_PREFIX, MIN_ROUND_MS, OLD_SERVER_AFTER_FAILURES, OLD_SERVER_AFTER_MS, RELAY_OFF, RELAY_READ_DEADLINE_MS, RELAY_STALL_CHECK_MS, RELAY_STALL_MS, RELAY_START_RETRY_MS, RELAY_TOOL, backoffMs } from './relay/config'
 import { BROWSER_MISSING_LINE, BROWSER_SERVER, createdTab, failureOf, holdsPlanTab, paneState, type BrowserResult, type BrowserTool } from './relay/browser'
 import { KEEPALIVE_GIVE_UP_MS, KEEPALIVE_IDLE_MS, KEEPALIVE_RETRY_MS, KEEPALIVE_RETRY_WINDOW_MS, KEEPALIVE_WAKE_CHECK_MS } from './relay/keepalive'
@@ -246,6 +246,8 @@ const queueFailuresTold = atom({ plugin: '50arms', key: 'queueFailuresTold' } as
 const queueHandedBack = atom({ plugin: '50arms', key: 'queueHandedBack' } as const, [] as number[])
 // the queued jobs a module instance took over from another, with the taker (ready/offer.ts, TakenOver): a copy that finds its mark missing stops only for a job another instance took over from it
 const queueTakenOver = atom({ plugin: '50arms', key: 'queueTakenOver' } as const, [] as TakenOver[])
+// the job items already told to the model (ready/offer.ts, withJobTold): visible to every module instance, so an item on it is never claimed or told again, whichever instance's mark comes back through a restore
+const queueJobsTold = atom({ plugin: '50arms', key: 'queueJobsTold' } as const, [] as number[])
 // the events issued to the session that asked to be acknowledged and whose acknowledgement call has not succeeded (relay/outbox.ts, shouldDropResend). $.state, so a reload keeps it.
 const ackInFlight = atom({ plugin: '50arms', key: 'ackInFlight' } as const, [] as AckInFlight)
 
@@ -316,6 +318,7 @@ async function carryAcrossConversation($: any): Promise<void> {
     queueFailuresTold: read($, queueFailuresTold),
     queueHandedBack: read($, queueHandedBack),
     queueTakenOver: read($, queueTakenOver),
+    queueJobsTold: read($, queueJobsTold),
     behavior: read($, behavior),
   }
   carriedState = Object.fromEntries(await Promise.all(Object.entries(reads).map(async ([key, value]) => [key, await value] as const)))
@@ -330,6 +333,9 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
   if (carried === null || (source !== 'clear' && source !== 'resume')) return
   // the module's own mark is the authority over the value read at session.end: a mark this instance wrote in the gap (the first mark of an offer) stays, and a mark it dropped in the gap stays dropped
   carried.queueJobTaking = markToRestore(carried.queueJobTaking)
+  // what the gap wrote joins what the conversation held, never replaced by it: a takeover entry is only evidence to keep, and a job told in the gap stays told (one handed back in the gap stays out)
+  carried.queueTakenOver = unionTakenOver(carried.queueTakenOver, await read($, queueTakenOver))
+  carried.queueJobsTold = unionJobsTold(carried.queueJobsTold, await read($, queueJobsTold), jobsLeft)
   await Promise.all([
     update($, view, () => carried.view),
     update($, gate, () => carried.gate),
@@ -385,6 +391,7 @@ async function restoreCarried($: any, source: unknown): Promise<void> {
     update($, queueFailuresTold, () => carried.queueFailuresTold),
     update($, queueHandedBack, () => carried.queueHandedBack),
     update($, queueTakenOver, () => carried.queueTakenOver),
+    update($, queueJobsTold, () => carried.queueJobsTold),
     update($, behavior, () => carried.behavior),
   ])
   // a fresh conversation (or another session taking this one's place) in the same process: what the dashboard shows may have moved while they were in the old one. Loaded from here, so
@@ -2864,6 +2871,8 @@ async function resumeQueueJob($: any, timerFired = false): Promise<void> {
 
 // The mark this instance last wrote and has not dropped, as the module's own copy: the authority `restoreCarried` writes back over the value read at `session.end` (a /clear's carry gap overwrites what a loop wrote in between)
 let ownMark: TakingJob | null = null
+// the job items this instance handed back since it last told them: a /clear's restore must not bring them back onto the told list
+const jobsLeft = new Set<number>()
 
 // What a /clear's restore writes for the mark: this instance's own copy when it has one, else the value read at `session.end` unless that is a mark this instance has dropped since (a restored ghost would tell the job twice)
 function markToRestore(carried: unknown): unknown {
@@ -2949,6 +2958,11 @@ async function workQueueJob($: any, hand: Hand, claimed: unknown, resumed: boole
       }
       return
     }
+    // an item already told to the model is never claimed or told again: the mark that brought this work back (another instance's, restored over a gap) is a ghost
+    if ((await read($, queueJobsTold)).includes(itemId)) {
+      await dropMark($, itemId)
+      return
+    }
     let answer = claimed
     if (answer === null) {
       const taken = await api($, 'POST', takePath(itemId))
@@ -2991,6 +3005,9 @@ async function workQueueJob($: any, hand: Hand, claimed: unknown, resumed: boole
     }
     // an instance that finds another owns the job tells nothing: that owner does
     if (!(await keepMark($, job, null, false)).kept) return
+    // told from here: on the list before the prompt's call, so no other copy tells it, and a failed call leaves the job (which takes it off)
+    jobsLeft.delete(itemId)
+    await update($, queueJobsTold, cur => withJobTold(cur, itemId))
     const issued = await issueEvent($, jobPrompt(itemId, answer, job.prepared), job.urgent)
     // the prompt is the engine's from its call (relay/outbox.ts): a reload from here on must not carry on a job the model is being told
     await dropMark($, itemId)
@@ -3015,6 +3032,9 @@ async function leaveQueueJob($: any, itemId: number, error: string, quietWhenNot
   await touchMark($, itemId)
   const left = await api($, 'DELETE', takePath(itemId), { body: { error } })
   await dropMark($, itemId)
+  // the job is no longer told to the model: it is claimed and told afresh when it is next worked
+  jobsLeft.add(itemId)
+  await update($, queueJobsTold, cur => withoutJobTold(cur, itemId))
   if (left.ok) {
     $.ui.toast(leftToast(itemId, error).slice(0, TOAST_ERROR_MAX))
     if (answer !== undefined) {
