@@ -291,7 +291,7 @@ for (const surface of SURFACES) {
       test('a worktree the old module already made is not made again', async ($, on) => {
         const d = dashboard(on)
         d.world.takeReplies[ITEM] = { body: ANSWER }
-        d.seedState('queueJobTaking', { ...MARK, prepared: { path: WORKTREE_PATH, worktree: ANSWER.worktree } })
+        d.seedState('queueJobTaking', { ...MARK, prepared: { path: WORKTREE_PATH, worktree: { branch: 'landing-fix', commit: 'abc123' } } })
         await startSession($, d, surface)
         await d.clock.settle()
         expect(makeRuns(d)).toEqual([])
@@ -300,14 +300,20 @@ for (const surface of SURFACES) {
         expect(calls(d, 'DELETE')).toEqual([])
       })
 
-      test('the prompt keeps the urgency the old module was told', async ($, on) => {
+      test('the job in hand is written before the claim and after the worktree, with the urgency its prompt needs, and cleared once the prompt is made', async ($, on) => {
         const d = dashboard(on)
         d.world.takeReplies[ITEM] = { body: ANSWER }
-        d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
-        d.seedState('queueJobTaking', { ...MARK, urgent: true })
+        d.world.processes['make'] = { stdout: `${WORKTREE_PATH}
+` }
         await startSession($, d, surface)
+        d.relay.push({ cursor: 'c1', text: OFFER_TEXT, urgent: true, offer: OFFER })
         await d.clock.settle()
-        expect(d.relay.delivered.map((x: { urgent: boolean }) => x.urgent)).toEqual([true])
+        const marks = d.stateWrites.filter((w: any) => w.key === 'queueJobTaking').map((w: any) => w.value)
+        expect(marks).toEqual([
+          { item_id: ITEM, urgent: true, prepared: null },
+          { item_id: ITEM, urgent: true, prepared: { path: WORKTREE_PATH, worktree: { branch: 'landing-fix', commit: 'abc123' } } },
+          null,
+        ])
       })
 
       test('a worktree that cannot be prepared after the reload hands the job back, and the model is told', async ($, on) => {
