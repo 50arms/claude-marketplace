@@ -624,8 +624,8 @@ export function dashboard(
     gitStatus: { exitCode: 0, stdout: '## main...origin/main\n' } as { exitCode: number; stdout: string },
     // What a `$.process.run` answers by its program (argv[0], for example `df` or `cmd.exe`); a program with no entry answers the git status above
     processes: {} as Record<string, { exitCode?: number; stdout: string; stderr?: string; throws?: string }>,
-    // A queued job's take (POST /api/dispatch-queue/<id>/take) answers this by item id (an item with no entry: the 403 a take of an offer this session does not hold gets),
-    // and its leave (DELETE, the same path) answers `leaveReply`, by default the route's 200 {id}
+    // A queued job's take (POST /api/dispatch-queue/<id>/take) answers this by item id (an item with no entry: the 409 dispatch_queue_take_held a claim of a job another session holds gets),
+    // and its leave (DELETE, the same path) answers `leaveReply`, by default the route's 200 {id}.
     takeReplies: {} as Record<number, { status?: number; body: unknown }>,
     leaveReply: undefined as { status: number; body: unknown } | undefined,
     // DX-4336: the rate-limit windows `$.session.usage()` answers (none by default: a session off a subscription, or before its first response)
@@ -836,7 +836,7 @@ export function dashboard(
     const queueTake = /^\/api\/dispatch-queue\/(\d+)\/take$/.exec(path)
     if (method === 'POST' && queueTake) {
       const scripted = world.takeReplies[Number(queueTake[1])]
-      return scripted === undefined ? reply({ error: 'dispatch_queue_take_not_offered' }, 403) : reply(scripted.body, scripted.status ?? 200)
+      return scripted === undefined ? reply({ error: 'dispatch_queue_take_held' }, 409) : reply(scripted.body, scripted.status ?? 200)
     }
     if (method === 'DELETE' && queueTake) return world.leaveReply === undefined ? reply({ id: Number(queueTake[1]) }) : reply(world.leaveReply.body, world.leaveReply.status)
     const repoOne = /^\/api\/repos\/([^/]+)$/.exec(path)

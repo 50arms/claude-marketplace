@@ -163,7 +163,7 @@ export type ReportState = { agents: Record<string, number>; shells: string[]; pl
 // session refused it. `again`: it was delivered once at its call (its cursor is stored, maybe behind later ones), so issuing it again stores no cursor.
 // `acks`: the events the record asks the session to acknowledge (empty for most records); required, so one written by the previous plugin version (which has none) is a fault when it is read back (fromPending).
 // `offer`: the queued job the record offers this session (the plugin takes it itself), written only on a record that has one.
-export type PendingEvent = { planId: number | null; cursor: string; text: string; urgent: boolean; acks: AckRef[]; offer?: { item_id: number; assignment_id: number }; again?: true }
+export type PendingEvent = { planId: number | null; cursor: string; text: string; urgent: boolean; acks: AckRef[]; offer?: { item_id: number }; again?: true }
 
 // one event the dashboard needs the session to acknowledge; `attempt` is how many times it has been sent (1 = the first send).
 export type AckRef = { eventId: number; attempt: number }
@@ -360,9 +360,9 @@ declare module 'claude-code' {
       relayOutbox: PendingEvent[]
       // the events issued to the session whose acknowledgement call has not succeeded yet (see AckInFlight): the relay drops a re-send of one the session already holds while its turn runs.
       ackInFlight: AckInFlight
-      // the queued job this module is taking and preparing, from just before its take until the model is told it or the job is left (null: none). A reload empties the module's own record of
-      // the work, so a relay run that finds this set with no module of its own on it leaves the job: the reloaded module can never finish it.
-      queueJobTaking: { item_id: number; assignment_id: number } | null
+      // the queued job this module has in hand, from just before its claim until the model is told it or the job is left (null: none), with how far it got (the prepared worktree)
+      // and how the model's prompt is issued. A reload empties the module's own record of the work, so a relay run that finds this set with no module of its own on it carries the job on from there.
+      queueJobTaking: { item_id: number; urgent: boolean; prepared: { path: string; worktree: { branch: string; commit: string } } | null } | null
       // the failures of a taken job already told to the model, one entry per job and error (the newest few): an identical failure of the same job at its next offer wakes the session no more.
       queueFailuresTold: { item_id: number; error: string }[]
       // the ids of this session's sub-agents running now (start adds, stop and their turn's end remove); the title shows the hammer mark while it is non-empty.

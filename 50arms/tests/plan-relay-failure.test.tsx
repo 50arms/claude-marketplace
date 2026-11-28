@@ -224,7 +224,7 @@ for (const surface of SURFACES) {
       ['an event whose urgent is null', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: null, acks: [] }] })],
       ['a good event followed by one whose urgent is a string', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: false, acks: [] }, { cursor: 'c4', text: 'y', urgent: 'no', acks: [] }] })],
       ['a stopped record without a fix', JSON.stringify({ stopped: { reason: 'r', detail: 'd' } })],
-      ['an event whose offer is not {item_id, assignment_id}', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: false, acks: [], offer: { item_id: 0 } }] })],
+      ['an event whose offer has no item_id', JSON.stringify({ events: [{ cursor: 'c3', text: 'x', urgent: false, acks: [], offer: { item_id: 0 } }] })],
     ] as const) {
       test(`a malformed answer (${name}) is a loud failure, never an empty list`, async ($, on) => {
         const d = dashboard(on)

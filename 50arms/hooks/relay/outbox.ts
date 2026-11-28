@@ -64,7 +64,7 @@ export const fromPending = (pending: readonly PendingEvent[], planId: number | n
       if (!isAckList(p.acks)) throw new StalePendingError(`a queued event (cursor ${p.cursor}) has no acks list`)
       // `offer` is written only on a record that has one, as `again` is: an entry without it is a record with no offer
       const offer = offerOf(p)
-      if (offer === 'malformed') throw new StalePendingError(`a queued event (cursor ${p.cursor}) has an offer that is not {item_id, assignment_id}`)
+      if (offer === 'malformed') throw new StalePendingError(`a queued event (cursor ${p.cursor}) has an offer with no item_id`)
       return { planId: p.planId, seq: firstSeq + i, event: { cursor: p.cursor, text: p.text, urgent: p.urgent, acks: p.acks, offer }, held: false, ...(p.again === true ? { again: true as const } : {}) }
     })
 

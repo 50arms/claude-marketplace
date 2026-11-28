@@ -7,7 +7,7 @@ import type { AckRef } from '../../types'
 import { malformedOfferLine, offerOf, type Offer } from '../ready/offer'
 
 // What one `plan_events_wait` call came to. The tool answers:
-//   {events: [{cursor: string, text: string, urgent: boolean, acks: {eventId, attempt}[], offer: {item_id, assignment_id} | null}]}   (events empty when the wait timed out)
+//   {events: [{cursor: string, text: string, urgent: boolean, acks: {eventId, attempt}[], offer: {item_id, ...} | null}]}   (events empty when the wait timed out)
 //   {stopped: {reason, detail, fix}}             (the relay cannot go on: the server's own detail and fix; the reason is for the server's logs)
 // as JSON text. Anything else is a failure shown as one, never an empty list (Core Principle 1).
 // A record's `cursor` is an opaque string the server minted: what to send back, and store, once that record is delivered. The plugin

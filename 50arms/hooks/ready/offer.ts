@@ -1,19 +1,21 @@
-// A queued job offered to this session. The dashboard offers a ready session a job from its dispatch queue, and the MCP server hands that record to the relay
-// with `offer: {item_id, assignment_id}` (null on every other record). The plugin, not the model, takes such a job: it takes it with the offer's assignment id, runs the
-// repo's own worktree command when the take answers a `worktree`, and only then tells the model the job, with the take's whole answer and the worktree's path. A take ends
-// the offer, so the model could never take it again: everything it needs is in that one prompt. When anything after the take fails, the plugin leaves the job (it goes
-// back to the queue) with the error, and the model is told what failed (jobHandedBack) when the take had landed and its worktree could not be made. The pure part is here; every `$` call is in the hooks module.
+// A queued job offered to this session. The dashboard offers a ready session a job from its dispatch queue and nudges it to claim it: the MCP server hands that record to the relay
+// with `offer: {item_id, assignment_id}` (null on every other record). The plugin, not the model, claims such a job (`POST /api/dispatch-queue/:id/take`: any session may claim, offered or not,
+// the first claim wins, DX-8401), runs the repo's own worktree command when the claim answers a `worktree`, and only then tells the model the job, with the claim's whole answer and the worktree's
+// path. The mark of the job in hand (`TakingJob`) is kept across a plugin reload, so the reloaded module carries the job on from where the old one stopped (CP-181) and hands it back only when the
+// session lets go or its worktree cannot be prepared. When anything after the claim fails, the plugin leaves the job (it goes back to the queue) with the error, and the model is told what failed
+// (jobHandedBack) when the claim had landed and its worktree could not be made. The pure part is here; every `$` call is in the hooks module.
 
-export type Offer = { item_id: number; assignment_id: number }
+export type Offer = { item_id: number }
 
 const isId = (x: unknown): x is number => Number.isSafeInteger(x) && (x as number) > 0
 
-// A record's offer: absent or null is no offer (an older MCP server sends none at all); anything else that is not {item_id, assignment_id} as positive integers is malformed
+// A record's offer: absent or null is no offer (an older MCP server sends none at all); anything else that is not an object with a positive integer `item_id` is malformed. The server's record also
+// names the offer's assignment; a claim needs none (DX-8401), so it is not kept.
 export function offerOf(record: any): Offer | null | 'malformed' {
   const o = record?.offer
   if (o === undefined || o === null) return null
-  if (typeof o !== 'object' || !isId(o.item_id) || !isId(o.assignment_id)) return 'malformed'
-  return { item_id: o.item_id, assignment_id: o.assignment_id }
+  if (typeof o !== 'object' || !isId(o.item_id)) return 'malformed'
+  return { item_id: o.item_id }
 }
 
 export const takePath = (itemId: number) => `/api/dispatch-queue/${itemId}/take`
@@ -58,13 +60,26 @@ export function worktreePathOf(argv: readonly string[], run: { exitCode: number;
 
 export const commandFailed = (argv: readonly string[], message: string) => `the worktree command \`${argv.join(' ')}\` could not run: ${message}`
 
+// The job this module has in hand, kept in `$.state` from before its claim until the model is told it or it is left, so a reload carries it on. `prepared` is the worktree once the repo's command made it
+// (a reloaded module claims the job again, which answers the holder the job once more, and does not run the command again), `urgent` how the model's prompt is issued.
+export type Prepared = { path: string; worktree: Worktree }
+export type TakingJob = { item_id: number; urgent: boolean; prepared: Prepared | null }
+
+// The mark a module wrote, or null when it is not one this module writes (a mark of another shape cannot be carried on)
+export function takingJobOf(x: any): TakingJob | null {
+  if (x === null || typeof x !== 'object' || !isId(x.item_id) || typeof x.urgent !== 'boolean') return null
+  const p = x.prepared
+  if (p !== null && (typeof p !== 'object' || !isText(p.path) || !isText(p.worktree?.branch) || !isText(p.worktree?.commit))) return null
+  return { item_id: x.item_id, urgent: x.urgent, prepared: p }
+}
+
 // The one prompt that tells the model the job it now holds: the take is done, and its answer is the job
 export function jobPrompt(itemId: number, answer: unknown, prepared: { path: string; worktree: Worktree } | null): string {
   const where =
     prepared === null
       ? 'It names no worktree to work in.'
       : `Its worktree is ready at ${prepared.path}, on ${prepared.worktree.branch} at ${prepared.worktree.commit}: work there by its absolute path and \`git -C\`, and never cd into it.`
-  return `50 Arms assigned this session queued job ${itemId}, and the session has already taken it for you: never call its take route. ${where} Do what its \`instruction\` says. The job, as its take answered it:\n${JSON.stringify(answer, null, 2)}`
+  return `50 Arms assigned this session queued job ${itemId}, and the session has already claimed it for you. ${where} Do what its \`instruction\` says. The job, as its take answered it:\n${JSON.stringify(answer, null, 2)}`
 }
 
 // What the model is told when a job the plugin took is handed back: the job it was offered, the error it was left with (which names the command, its exit and the tail of its output, or why no
@@ -79,7 +94,7 @@ function jobLabel(itemId: number, answer: any): string {
 }
 
 export function jobHandedBack(itemId: number, answer: unknown, error: string): string {
-  return `50 Arms assigned this session ${jobLabel(itemId, answer)}, and the session took it, but could not prepare it: ${error}. The session handed the job back to the queue, so it no longer holds it: do not work it and never call its take route. If the cause is on this machine (a damaged install, a stale worktree, a missing tool), repair it now, before 50 Arms offers the job again; otherwise tell the person what failed.`
+  return `50 Arms assigned this session ${jobLabel(itemId, answer)}, and the session claimed it, but could not prepare it: ${error}. The session handed the job back to the queue, so it no longer holds it: do not work it unless you claim it again. If the cause is on this machine (a damaged install, a stale worktree, a missing tool), repair it now. Once it is repaired, claim the job again with \`50arms_api\` \`POST ${takePath(itemId)}\` (no body): the first claim wins, and a refusal names the session that holds it. Its answer is the job; run its \`worktree_command\` (\`{branch}\` and \`{commit}\` filled from its \`worktree\`) to make the worktree, then do its \`instruction\`. If the cause is not on this machine, tell the person what failed.`
 }
 
 // The failures already told to the model, one entry per job and error, so an identical failure at the next offer of the same job wakes the session no more. The newest FAILURES_TOLD_MAX are kept.
@@ -95,12 +110,13 @@ export const notTakenToast = (itemId: number, why: string) => `Queued job ${item
 export const leftToast = (itemId: number, error: string) => `Queued job ${itemId} went back to the queue: ${error}`
 // the leave's own failure first: the job is still held by this session, which is what the person must act on
 export const leaveFailedToast = (itemId: number, error: string, why: string) => `Queued job ${itemId} is still held here: leaving it failed (${why}) after ${error}`
+// The claim a reloaded module made again could not be answered (the dashboard was unreachable or failed): the mark stays, and the next relay run claims again
+export const claimUnreadToast = (itemId: number, why: string) => `Queued job ${itemId} could not be claimed again after the plugin reloaded (${why}): it is claimed again at the next relay run`
 export const busyToast = (itemId: number, busyWith: number) => `Queued job ${itemId} was not taken: this session is still preparing queued job ${busyWith}`
-export const malformedOfferLine = 'answered a record whose offer is not {item_id, assignment_id}'
+export const malformedOfferLine = 'answered a record whose offer has no item_id'
 
 // The errors a job is left with
 export const PROMPT_REFUSED = (why: string) => `the session did not take the job's prompt: ${why}`
-export const RELOADED_WHILE_PREPARING = "the plugin was reloaded while it prepared the job's worktree"
 
-// The leave route refuses a session that does not hold the job: after a reload, the take that was under way never landed, so there is nothing to give back
+// The leave route refuses a session that does not hold the job: a leave of a claim that never landed has nothing to give back
 export const NOT_HOLDER = 'dispatch_queue_leave_not_holder'
