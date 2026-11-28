@@ -1055,6 +1055,30 @@ describe('failures of the guard itself', () => {
     expect(tokens[0]).toMatch(/\S/)
   })
 
+  // CP-185: a claimed answer too malformed to use (no claim id) fails the claim, and 50 Arms may hold the slot, so it is given back by the claim's token
+  test('a claimed answer with no claim id fails the claim and gives it back by its token', async () => {
+    resetPacing()
+    const calls: Array<[string, string, any]> = []
+    const env: PacingEnv = {
+      agentGrade: () => Promise.resolve(undefined),
+      now: () => Promise.resolve(0),
+      within: (_ms, work) => work,
+      call: (method: string, path: string, body?: object) => {
+        calls.push([method, path, body])
+        return Promise.resolve({ ok: true, status: 200, body: method === 'DELETE' ? { released: true } : { claimed: true, claim_id: '' } } as any)
+      },
+      reading: () => Promise.resolve(null),
+      signedIn: () => Promise.resolve(true),
+      sleep: () => Promise.resolve(),
+      toast: () => {},
+    }
+    const c = await claimSlot(env)
+    await Promise.resolve()
+    expect(c.kind).toBe('failed')
+    const post = calls.find(x => x[0] === 'POST')!
+    expect(calls.find(x => x[0] === 'DELETE')![1]).toBe(`/api/pacing/agents/claim?client_token=${encodeURIComponent(post[2].client_token)}`)
+  })
+
   // DX-5595: the refusal is worded from the cause 50 Arms names, not from the plugin's own reading of the figures it came with
   test('the wording follows the cause 50 Arms names, even when the figures read otherwise', async () => {
     resetPacing()

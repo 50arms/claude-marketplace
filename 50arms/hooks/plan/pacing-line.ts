@@ -70,7 +70,7 @@ export function parsePacing(body: any): Pacing | null | { error: string } {
   // main agents are counted and shown, never compared with the budget; the budget counts sub-agents only
   if (!Number.isInteger(body.main_agents) || body.main_agents < 0) return { error: 'the pacing line answer has no main_agents' }
   if (!Number.isInteger(body.sub_agents) || body.sub_agents < 0) return { error: 'the pacing line answer has no sub_agents' }
-  // the slots held for sessions that waited longer (their offers), other sessions' only: part of the one canonical shape, so absent is an error
+  // the slots that belong to queue tickets ahead of the spawn, other sessions' only: part of the one canonical shape, so absent is an error
   if (!Number.isInteger(body.reserved_agents) || body.reserved_agents < 0) return { error: 'the pacing line answer has no reserved_agents' }
   if (typeof body.line !== 'string' || body.line.trim() === '') return { error: 'the pacing line answer has no readable line' }
   return {
@@ -122,7 +122,7 @@ function setSlotRefused(env: PacingEnv, next: boolean): void {
   env.onSlotChange?.()
 }
 
-// a verdict with a slot free for a sub-agent: on pace, and a budget that is null (no cap) or above the sub-agents running plus the slots held back
+// a verdict with a slot free for a sub-agent: on pace, and a budget that is null (no cap) or above the sub-agents running plus the slots that belong to tickets ahead
 function slotFree(v: PacingVerdict): boolean {
   return v.level === 'on_pace' && (v.budget === null || v.budget > v.subAgents + v.reservedAgents)
 }
@@ -340,6 +340,8 @@ export async function claimSlot(env: PacingEnv): Promise<Claim> {
     if (isSignedOut(r)) return { kind: 'unknown' }
     if (!r.ok) return { kind: 'failed', failure: r.status === 0 ? errText(r) : `the spawn claim answered ${r.status}` }
     const claim = parseClaim(r.body, clientToken)
+    // a claimed answer too malformed to use: 50 Arms took the slot, so it is given back by its token like a cut-off claim
+    if (claim.kind === 'failed' && r.body?.claimed === true) void releaseClaim(env, clientToken)
     if ((claim.kind === 'claimed' || claim.kind === 'refused') && gen === generation) {
       cache = claim.pacing === null ? null : { pacing: claim.pacing, fetchedAt: startedAt }
       hasSucceeded = true
@@ -374,7 +376,8 @@ export function reportClaimFailure(env: PacingEnv, failure: string): void {
 // reportClaimFailure), never silently: an error answer, an unreachable server, a timeout or a throw. A signed-out answer and `{released:false}`
 // (a 200, normal) stay silent; a good give-back clears the slot, so the same failure after it is told again.
 export async function releaseClaim(env: PacingEnv, clientToken: string): Promise<void> {
-  // a give-back is only ever of a `claimed` claim, but not always one that set hasSucceeded: a claim in flight across a session start
+  // a give-back is of a `claimed` claim, one a spawn the host refused left, a claim the deadline cut off before its answer, or a claimed answer that
+  // was malformed. It does not always follow a claim that set hasSucceeded: a claim in flight across a session start
   // (resetPacing) comes back `claimed` without writing the new session's state. Its give-back is harmless (50 Arms scopes deleteAgentClaim to the
   // session and answers released:false). One that crosses resetPacing itself writes and tells nothing, and its claim lapses in 50 Arms.
   const gen = generation

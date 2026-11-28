@@ -45,7 +45,7 @@ export function tierOf(model: string | undefined): Tier | null {
 
 // "Tight": the spawn would take the last free slot under a budget (at most TIGHT_FREE_SLOTS slots free). One rule, documented here and tested.
 export const TIGHT_FREE_SLOTS = 1
-// a slot held for a woken session is not free (`reserved`).
+// a slot that belongs to a queue ticket ahead of the spawn is not free (`reserved`).
 export function isTight(budget: number | null, running: number, reserved: number): boolean {
   return budget !== null && budget - running - reserved <= TIGHT_FREE_SLOTS
 }
@@ -53,8 +53,8 @@ export function isTight(budget: number | null, running: number, reserved: number
 // What the plan-workflow skill quotes (see the header): the refusal the model reads starts with this.
 export const REFUSAL_PREFIX = 'Usage pacing:'
 
-// How long 50 Arms holds a slot for a queued ticket once it is ready (DX-8451, DEC-3538 v2); the refusal names it, the held-slot wording is pinned to it.
-export const TICKET_HOLD_MINUTES = 10
+// How long 50 Arms holds a slot for a queued ticket once it is ready (DX-8451, DEC-3538 v2); the refusal's ready-ticket wording names it.
+const TICKET_HOLD_MINUTES = 10
 
 // What a paced session does: record its state on its card, pause on `pacing`, and wait; no work of its own. 50 Arms messages it when its queue ticket is ready.
 export const PACED_STOP = 'Record any unrecorded state on the card it concerns, pause with PUT /api/plan-sessions/me/pause {waits_on: "pacing"}, do not do the work yourself, and wait until you are told to continue.'
