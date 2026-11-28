@@ -1,9 +1,9 @@
 // A queued job offered to this session. The dashboard offers a ready session a job from its dispatch queue and nudges it to claim it: the MCP server hands that record to the relay
 // with `offer: {item_id, assignment_id}` (null on every other record). The plugin, not the model, claims such a job (`POST /api/dispatch-queue/:id/take`: any session may claim, offered or not,
 // the first claim wins, DX-8401), runs the repo's own worktree command when the claim answers a `worktree`, and only then tells the model the job, with the claim's whole answer and the worktree's
-// path. The mark of the job in hand (`TakingJob`) is kept across a plugin reload, so the reloaded module carries the job on from where the old one stopped (CP-181) and hands it back only when the
-// session lets go or its worktree cannot be prepared. When anything after the claim fails, the plugin leaves the job (it goes back to the queue) with the error, and the model is told what failed
-// (jobHandedBack) when the claim had landed and its worktree could not be made. The pure part is here; every `$` call is in the hooks module.
+// path. The mark of the job in hand (`TakingJob`) names the module instance that owns it, so a reloaded module, which does not end the old module's work, never acts on a job another instance may still be
+// working (CP-181); it takes a job over only once its owner has been silent longer than any step can take. When anything after the claim fails, the plugin leaves the job (it goes back to the queue)
+// with the error, and the model is told what failed (jobHandedBack) when the claim had landed and its worktree could not be made. The pure part is here; every `$` call is in the hooks module.
 
 export type Offer = { item_id: number }
 
@@ -60,17 +60,48 @@ export function worktreePathOf(argv: readonly string[], run: { exitCode: number;
 
 export const commandFailed = (argv: readonly string[], message: string) => `the worktree command \`${argv.join(' ')}\` could not run: ${message}`
 
-// The job this module has in hand, kept in `$.state` from before its claim until the model is told it or it is left, so a reload carries it on. `prepared` is the worktree once the repo's command made it
-// (a reloaded module claims the job again, which answers the holder the job once more, and does not run the command again), `urgent` how the model's prompt is issued.
-export type Prepared = { path: string; worktree: Worktree }
-export type TakingJob = { item_id: number; urgent: boolean; prepared: Prepared | null }
+// The longest the repo's worktree command may run: the engine's own limit for one process
+export const WORKTREE_COMMAND_TIMEOUT_MS = 600_000
+// A reloaded plugin does not end the old module's work: the old module's in-flight claim, command and prompt go on. Its job in hand is its mark's, and every step of it rewrites the mark (`at`) before a wait
+// of at most the command's limit, so an owner that has not touched its mark for this long is gone.
+export const OWNER_SILENT_MS = WORKTREE_COMMAND_TIMEOUT_MS + 60_000
 
-// The mark a module wrote, or null when it is not one this module writes (a mark of another shape cannot be carried on)
+// The job a module has in hand, kept in `$.state` from before its claim until the model is told it or it is left. `owner` is the instance id the module that wrote it minted when it loaded, `at` the time of
+// its last write. `prepared` is the worktree once the repo's command made it (a module that carries the job on claims it again, which answers the holder the job once more, and does not run the command again),
+// `urgent` how the model's prompt is issued.
+export type Prepared = { path: string; worktree: Worktree }
+export type TakingJob = { item_id: number; urgent: boolean; prepared: Prepared | null; owner: string; at: number }
+// what a module has in hand before it writes the mark
+export type Hand = Pick<TakingJob, 'item_id' | 'urgent' | 'prepared'>
+
+// The mark a module wrote, or null when it is not one this module writes: a mark of another shape belongs to an older plugin's module, which may still be working the job
 export function takingJobOf(x: any): TakingJob | null {
-  if (x === null || typeof x !== 'object' || !isId(x.item_id) || typeof x.urgent !== 'boolean') return null
+  if (x === null || typeof x !== 'object' || !isId(x.item_id) || typeof x.urgent !== 'boolean' || !isText(x.owner) || typeof x.at !== 'number') return null
   const p = x.prepared
   if (p !== null && (typeof p !== 'object' || !isText(p.path) || !isText(p.worktree?.branch) || !isText(p.worktree?.commit))) return null
-  return { item_id: x.item_id, urgent: x.urgent, prepared: p }
+  return { item_id: x.item_id, urgent: x.urgent, prepared: p, owner: x.owner, at: x.at }
+}
+
+// How long `owner`'s module has to wait before it may act on the mark `job`: nothing for its own mark, else until the mark's owner has been silent for OWNER_SILENT_MS (0 once it has)
+export const ownerWaitMs = (job: TakingJob, owner: string, now: number): number => (job.owner === owner ? 0 : Math.max(0, job.at + OWNER_SILENT_MS - now))
+
+// Whether the module `owner` may write its job in hand over the mark `cur`: over none, over its own and over one of another shape (never read, so never kept from a new job). A mark another instance wrote
+// stands in the way, or is the blocker the answer names, unless `takingOver` (the module carries that job on) and its owner has been silent long enough.
+export function markWritable(cur: unknown, owner: string, now: number, takingOver: boolean): { ok: true } | { ok: false; by: TakingJob } {
+  const job = takingJobOf(cur)
+  if (job === null || job.owner === owner) return { ok: true }
+  return takingOver && ownerWaitMs(job, owner, now) === 0 ? { ok: true } : { ok: false, by: job }
+}
+
+// The refusals a claim answers when the session holds nothing of the job. Any other refusal of a claim a reloaded module makes again may leave the session holding the job it claimed before the reload, so the job is handed back.
+const CLAIM_HOLDS_NOTHING = ['dispatch_queue_take_held', 'dispatch_queue_take_not_ready', 'dispatch_queue_item_finished']
+export const claimHoldsNothing = (body: any): boolean => CLAIM_HOLDS_NOTHING.includes(body?.error)
+
+// The model's own claim of a queue job (`50arms_api` `POST /api/dispatch-queue/<id>/take`): its item id, or null for any other call
+export function claimedItemOf(method: unknown, path: unknown): number | null {
+  if (typeof method !== 'string' || method.toUpperCase() !== 'POST' || typeof path !== 'string') return null
+  const m = /^\/api\/dispatch-queue\/(\d+)\/take$/.exec(path)
+  return m === null ? null : Number(m[1])
 }
 
 // The one prompt that tells the model the job it now holds: the take is done, and its answer is the job
@@ -94,7 +125,7 @@ function jobLabel(itemId: number, answer: any): string {
 }
 
 export function jobHandedBack(itemId: number, answer: unknown, error: string): string {
-  return `50 Arms assigned this session ${jobLabel(itemId, answer)}, and the session claimed it, but could not prepare it: ${error}. The session handed the job back to the queue, so it no longer holds it: do not work it unless you claim it again. If the cause is on this machine (a damaged install, a stale worktree, a missing tool), repair it now. Once it is repaired, claim the job again with \`50arms_api\` \`POST ${takePath(itemId)}\` (no body): the first claim wins, and a refusal names the session that holds it. Its answer is the job; run its \`worktree_command\` (\`{branch}\` and \`{commit}\` filled from its \`worktree\`) to make the worktree, then do its \`instruction\`. If the cause is not on this machine, tell the person what failed.`
+  return `50 Arms assigned this session ${jobLabel(itemId, answer)}, and the session claimed it, but could not prepare it: ${error}. The session handed the job back to the queue, so it no longer holds it: do not work it unless you claim it again. If the cause is on this machine (a damaged install, a stale worktree, a missing tool), repair it now, then claim the job again with \`50arms_api\` \`POST ${takePath(itemId)}\` (no body): the first claim wins, and a refusal names the session that holds it. A refusal \`repo_mismatch\` means this session is not on the ready list of the job's repo (its ready mark ended when it claimed the job): load the \`50arms:ready\` skill to join the list again, then claim. Once the claim lands the session makes the worktree and tells you the job, as it did the first time: never make the worktree yourself. If the cause is not on this machine, tell the person what failed.`
 }
 
 // The failures already told to the model, one entry per job and error, so an identical failure at the next offer of the same job wakes the session no more. The newest FAILURES_TOLD_MAX are kept.
@@ -110,8 +141,8 @@ export const notTakenToast = (itemId: number, why: string) => `Queued job ${item
 export const leftToast = (itemId: number, error: string) => `Queued job ${itemId} went back to the queue: ${error}`
 // the leave's own failure first: the job is still held by this session, which is what the person must act on
 export const leaveFailedToast = (itemId: number, error: string, why: string) => `Queued job ${itemId} is still held here: leaving it failed (${why}) after ${error}`
-// The claim a reloaded module made again could not be answered (the dashboard was unreachable or failed): the mark stays, and the next relay run claims again
-export const claimUnreadToast = (itemId: number, why: string) => `Queued job ${itemId} could not be claimed again after the plugin reloaded (${why}): it is claimed again at the next relay run`
+// The claim could not be answered (the dashboard was unreachable or failed): the mark stays and the claim is made again after a wait
+export const claimUnreadToast = (itemId: number, why: string) => `Queued job ${itemId} could not be claimed (${why}): it is claimed again shortly`
 export const busyToast = (itemId: number, busyWith: number) => `Queued job ${itemId} was not taken: this session is still preparing queued job ${busyWith}`
 export const malformedOfferLine = 'answered a record whose offer has no item_id'
 

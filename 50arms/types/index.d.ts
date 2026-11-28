@@ -360,9 +360,10 @@ declare module 'claude-code' {
       relayOutbox: PendingEvent[]
       // the events issued to the session whose acknowledgement call has not succeeded yet (see AckInFlight): the relay drops a re-send of one the session already holds while its turn runs.
       ackInFlight: AckInFlight
-      // the queued job this module has in hand, from just before its claim until the model is told it or the job is left (null: none), with how far it got (the prepared worktree)
-      // and how the model's prompt is issued. A reload empties the module's own record of the work, so a relay run that finds this set with no module of its own on it carries the job on from there.
-      queueJobTaking: { item_id: number; urgent: boolean; prepared: { path: string; worktree: { branch: string; commit: string } } | null } | null
+      // the queued job a module instance has in hand, from just before its claim until the model is told it or the job is left (null: none): the job, whether its prompt is urgent, the worktree once it is made, the id of the
+      // instance that owns it and when that instance last wrote it. A reload does NOT end the old instance's work, so a reloaded module acts on a mark another instance owns only once that owner has been silent for longer than
+      // any step takes. A mark of another shape is an older plugin's module's, never read.
+      queueJobTaking: { item_id: number; urgent: boolean; prepared: { path: string; worktree: { branch: string; commit: string } } | null; owner: string; at: number } | null
       // the failures of a taken job already told to the model, one entry per job and error (the newest few): an identical failure of the same job at its next offer wakes the session no more.
       queueFailuresTold: { item_id: number; error: string }[]
       // the ids of this session's sub-agents running now (start adds, stop and their turn's end remove); the title shows the hammer mark while it is non-empty.
