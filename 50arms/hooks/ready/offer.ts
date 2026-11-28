@@ -88,28 +88,36 @@ export function takingJobOf(x: any): TakingJob | null {
 export type Watch = { item_id: number; owner: string; at: number }
 
 // What the module `owner` does with the mark `job` it finds (DEC-3425):
-//   own      it wrote it (a claim it retries): it carries on
+//   own      it wrote it: it carries on (a claim it retries only once its `retry_at` has passed)
 //   take     the owner is gone: a mark waiting on a retry whose `retry_at` has passed (no command runs behind it, and a reload cancelled the owner's timer), or one the reader has watched for the whole window with its own
 //            timer (`timerFired`) and whose `at` has not changed
 //   retry    a mark waiting on a retry that is not due: look again in `waitMs`
-//   watch    another instance's mark the reader has not watched yet, or whose `at` moved: note it and arm the timer
-//   waiting  the reader's timer for this very mark is armed: nothing to do before it fires
+//   watch    another instance's mark the reader has not watched yet, whose `at` moved, or whose timer is not pending any more: note it and arm the timer
+//   waiting  the reader's timer for this very mark is pending (`timerPending`): nothing to do before it fires
 export type Takeover = { kind: 'own' | 'take' | 'watch' | 'waiting' } | { kind: 'retry'; waitMs: number }
-export function takeoverOf(job: TakingJob, owner: string, now: number, watched: Watch | null, timerFired: boolean): Takeover {
+export function takeoverOf(job: TakingJob, owner: string, now: number, watched: Watch | null, timerFired: boolean, timerPending: boolean): Takeover {
+  if (job.retry_at !== null && now < job.retry_at) return { kind: 'retry', waitMs: job.retry_at - now }
   if (job.owner === owner) return { kind: 'own' }
-  if (job.retry_at !== null) return now >= job.retry_at ? { kind: 'take' } : { kind: 'retry', waitMs: job.retry_at - now }
+  if (job.retry_at !== null) return { kind: 'take' }
   const same = watched !== null && watched.item_id === job.item_id && watched.owner === job.owner && watched.at === job.at
   if (!same) return { kind: 'watch' }
-  return timerFired ? { kind: 'take' } : { kind: 'waiting' }
+  if (timerFired) return { kind: 'take' }
+  return timerPending ? { kind: 'waiting' } : { kind: 'watch' }
 }
 
-// Whether the module `owner` may write its job in hand, `itemId`, over the mark `cur`: over none, and over one of another shape (never read, so never kept from a new job). Its own mark of another job stands in the way (that job's
-// claim is unanswered, or it is in hand) and so does a mark another instance wrote, which is the blocker the answer names, unless `takingOver` (the module carries that very job on after `takeoverOf` said take).
-export function markWritable(cur: unknown, owner: string, itemId: number, takingOver: boolean): { ok: true } | { ok: false; by: TakingJob } {
+// The mark a takeover judged: it replaces exactly this owner's mark at this `at`, never a mark the owner wrote since (compare-and-set)
+export type Judged = { owner: string; at: number }
+
+// Whether the module `owner` may write its job in hand, `itemId`, over the mark `cur`. Over no mark only for the first write of a job (`first`): a later write that finds its mark missing means the job was taken over
+// and told while the write's call was away, so the job is lost to this module, never made again. Over one of another shape (never read, so never kept from a new job). Its own mark of another job stands in the way (that
+// job's claim is unanswered, or it is in hand) and so does a mark another instance wrote, which is the blocker the answer names, unless `over` (the module carries that very job on after `takeoverOf` said take) names
+// exactly that mark's owner and `at`.
+export function markWritable(cur: unknown, owner: string, itemId: number, over: Judged | null, first: boolean): { ok: true } | { ok: false; by: TakingJob | null } {
+  const raw = cur !== null && cur !== undefined
   const job = takingJobOf(cur)
-  if (job === null) return { ok: true }
+  if (job === null) return raw || (first && over === null) ? { ok: true } : { ok: false, by: null }
   if (job.owner === owner) return job.item_id === itemId ? { ok: true } : { ok: false, by: job }
-  return takingOver && job.item_id === itemId ? { ok: true } : { ok: false, by: job }
+  return over !== null && job.item_id === itemId && job.owner === over.owner && job.at === over.at ? { ok: true } : { ok: false, by: job }
 }
 
 // The jobs this session handed back, whose claim by the model is the session's to make the worktree for: newest HANDED_BACK_MAX kept. A claim of any other job (a holder reading its job back) is the model's own.
@@ -155,7 +163,7 @@ export function jobHandedBack(itemId: number, answer: unknown, error: string): s
 // What the model is told when its claim of a handed-back job could not be worked because the session has another job in hand (DEC-3425): the claim had landed, so the job was handed back; the model waits for the job in
 // hand, whose prompt is coming, and never claims this one again at once (a session holds one job: the claim would be refused, or handed back again).
 export function jobBusyHandedBack(itemId: number, answer: unknown, busyWith: number): string {
-  return `50 Arms assigned this session ${jobLabel(itemId, answer)}, and you claimed it, but the session is still preparing queued job ${busyWith}, so it handed this job back to the queue. Wait for the prompt that tells you queued job ${busyWith} and work that job: do not claim queued job ${itemId} again now. 50 Arms offers it again when the session is free.`
+  return `50 Arms assigned this session ${jobLabel(itemId, answer)}, and you claimed it, but the session is still preparing queued job ${busyWith}, so it handed this job back to the queue: it is back in the queue for any session. Wait for the prompt that tells you queued job ${busyWith} and work that job: do not claim queued job ${itemId} again now. This session can claim it again with \`50arms_api\` \`POST ${takePath(itemId)}\` (no body) once it no longer holds the other job, since the dashboard refuses a second job (\`session_holds_job\`) while it does.`
 }
 
 // The failures already told to the model, one entry per job and error, so an identical failure at the next offer of the same job wakes the session no more. The newest FAILURES_TOLD_MAX are kept.

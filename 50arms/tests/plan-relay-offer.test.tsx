@@ -53,31 +53,43 @@ const SAVED = { planId: 23, cursor: 'c1', text: OFFER_TEXT, urgent: false, acks:
 const job = (owner: string, at: number, retryAt: number | null = null, item = ITEM): TakingJob => ({ item_id: item, urgent: false, prepared: null, owner, at, retry_at: retryAt })
 
 describe('the job in hand and its owner (CP-181, DEC-3425)', () => {
-  test("a module may write its job over no mark, its own mark of the same job and one of another shape; never over its own mark of another job or another instance's, unless it takes that very job over", () => {
-    const me = (cur: unknown, item: number, over: boolean) => markWritable(cur, 'me', item, over)
-    expect(me(null, ITEM, false)).toEqual({ ok: true })
-    expect(me(job('me', NOW), ITEM, false)).toEqual({ ok: true })
-    expect(me({ item_id: ITEM, assignment_id: 7 }, ITEM, false)).toEqual({ ok: true })
+  test("a module may write its job over no mark only for the job's first write, over its own mark of the same job and over one of another shape; never over its own mark of another job or another instance's, unless it takes that very mark over, judged by owner and at", () => {
+    const me = (cur: unknown, item: number, over: { owner: string; at: number } | null, first = false) => markWritable(cur, 'me', item, over, first)
+    expect(me(null, ITEM, null, true)).toEqual({ ok: true })
+    // a later write that finds its mark missing: the job was taken over and told, so it is lost to this module
+    expect(me(null, ITEM, null, false)).toEqual({ ok: false, by: null })
+    // a takeover of a mark that is gone is no takeover
+    expect(me(null, ITEM, { owner: 'old', at: NOW }, true)).toEqual({ ok: false, by: null })
+    expect(me(job('me', NOW), ITEM, null)).toEqual({ ok: true })
+    expect(me({ item_id: ITEM, assignment_id: 7 }, ITEM, null, true)).toEqual({ ok: true })
     // its own mark of another job: that job's claim is unanswered, or it is in hand
-    expect(me(job('me', NOW), ITEM + 1, false)).toEqual({ ok: false, by: job('me', NOW) })
-    expect(me(job('old', NOW), ITEM, false)).toEqual({ ok: false, by: job('old', NOW) })
-    expect(me(job('old', NOW), ITEM, true)).toEqual({ ok: true })
-    expect(me(job('old', NOW), ITEM + 1, true)).toEqual({ ok: false, by: job('old', NOW) })
+    expect(me(job('me', NOW), ITEM + 1, null, true)).toEqual({ ok: false, by: job('me', NOW) })
+    expect(me(job('old', NOW), ITEM, null, true)).toEqual({ ok: false, by: job('old', NOW) })
+    expect(me(job('old', NOW), ITEM, { owner: 'old', at: NOW }, true)).toEqual({ ok: true })
+    expect(me(job('old', NOW), ITEM + 1, { owner: 'old', at: NOW }, true)).toEqual({ ok: false, by: job('old', NOW) })
+    // the owner wrote again between the judgement and the write: the takeover does not replace that mark
+    expect(me(job('old', NOW + 1), ITEM, { owner: 'old', at: NOW }, true)).toEqual({ ok: false, by: job('old', NOW + 1) })
+    expect(me(job('other', NOW), ITEM, { owner: 'old', at: NOW }, true)).toEqual({ ok: false, by: job('other', NOW) })
   })
 
-  test('the reader takes a mark over by signs of life: its own at once, a retry mark once retry_at has passed, any other mark only after its own timer ran a whole window with at unchanged', () => {
+  test('the reader takes a mark over by signs of life: its own when it is due, a retry mark once retry_at has passed, any other mark only after its own timer ran a whole window with at unchanged and is still pending until then', () => {
     const seen = { item_id: ITEM, owner: 'old', at: 100 }
-    expect(takeoverOf(job('me', NOW), 'me', NOW, null, false)).toEqual({ kind: 'own' })
+    expect(takeoverOf(job('me', NOW), 'me', NOW, null, false, false)).toEqual({ kind: 'own' })
+    // a claim of its own that waits on its retry is not carried on before it is due
+    expect(takeoverOf(job('me', NOW, NOW + 1_000), 'me', NOW, null, false, false)).toEqual({ kind: 'retry', waitMs: 1_000 })
+    expect(takeoverOf(job('me', NOW, NOW + 1_000), 'me', NOW + 1_000, null, false, false)).toEqual({ kind: 'own' })
     // a mark waiting on a retry
-    expect(takeoverOf(job('old', NOW, NOW + 5_000), 'me', NOW, null, false)).toEqual({ kind: 'retry', waitMs: 5_000 })
-    expect(takeoverOf(job('old', NOW, NOW + 5_000), 'me', NOW + 5_000, null, false)).toEqual({ kind: 'take' })
+    expect(takeoverOf(job('old', NOW, NOW + 5_000), 'me', NOW, null, false, false)).toEqual({ kind: 'retry', waitMs: 5_000 })
+    expect(takeoverOf(job('old', NOW, NOW + 5_000), 'me', NOW + 5_000, null, false, false)).toEqual({ kind: 'take' })
     // any other mark: not watched yet, however old its time is by the clock
-    expect(takeoverOf(job('old', 100), 'me', NOW + OWNER_SILENT_MS * 100, null, false)).toEqual({ kind: 'watch' })
-    expect(takeoverOf(job('old', 100), 'me', NOW, seen, false)).toEqual({ kind: 'waiting' })
-    expect(takeoverOf(job('old', 100), 'me', NOW, seen, true)).toEqual({ kind: 'take' })
+    expect(takeoverOf(job('old', 100), 'me', NOW + OWNER_SILENT_MS * 100, null, false, false)).toEqual({ kind: 'watch' })
+    expect(takeoverOf(job('old', 100), 'me', NOW, seen, false, true)).toEqual({ kind: 'waiting' })
+    // watched but no timer is pending (a fire was lost to a busy module): watch again, never wait on nothing
+    expect(takeoverOf(job('old', 100), 'me', NOW, seen, false, false)).toEqual({ kind: 'watch' })
+    expect(takeoverOf(job('old', 100), 'me', NOW, seen, true, false)).toEqual({ kind: 'take' })
     // the owner wrote again (it is alive): a new watch, never a takeover
-    expect(takeoverOf(job('old', 200), 'me', NOW, seen, true)).toEqual({ kind: 'watch' })
-    expect(takeoverOf(job('other-owner', 100), 'me', NOW, seen, true)).toEqual({ kind: 'watch' })
+    expect(takeoverOf(job('old', 200), 'me', NOW, seen, true, false)).toEqual({ kind: 'watch' })
+    expect(takeoverOf(job('other-owner', 100), 'me', NOW, seen, true, false)).toEqual({ kind: 'watch' })
   })
 
   test("the model's own claim is a POST of a queue job's take route, and nothing else", () => {
@@ -414,6 +426,49 @@ for (const surface of SURFACES) {
         expect(d.toasts.some((t: string) => t.includes('is still preparing'))).toBe(false)
       })
 
+      test('the window ends while the module is busy with a model claim: the fire is not lost, the mark is taken over afterwards and a later offer is taken', async ($, on) => {
+        const d = dashboard(on)
+        d.world.takeReplies[ITEM] = { body: ANSWER }
+        d.world.takeReplies[ITEM + 2] = { body: { ...ANSWER, item_id: ITEM + 2 } }
+        d.world.processes['make'] = { stdout: `${WORKTREE_PATH}\n` }
+        d.seedState('queueHandedBack', [ITEM + 1])
+        d.seedState('queueJobTaking', LIVE)
+        on('tool.call', { tool: API }, () => ({ result: {}, text: JSON.stringify({ ok: true, status: 200, body: { ...ANSWER, item_id: ITEM + 1 } }), isError: false }) as any)
+        await startSession($, d, surface)
+        await d.clock.settle()
+        await d.clock.advance(OWNER_SILENT_MS - 2_000)
+        // the model's claim of another job lands now, and its hand-back waits on a slow dashboard across the end of the window
+        d.holdApi(6_000)
+        await $.tool.call({ tool: API, method: 'POST', path: `/api/dispatch-queue/${ITEM + 1}/take`, body: {} } as any)
+        await d.clock.advance(4_000)
+        expect(calls(d, 'POST')).toEqual([])
+        d.holdApi(0)
+        await d.clock.advance(20_000)
+        await d.clock.settle()
+        expect(calls(d, 'POST')).toHaveLength(1)
+        expect(makeRuns(d)).toHaveLength(1)
+        expect(told(d).map(t => t.includes(`queued job ${ITEM}`) && t.includes(WORKTREE_PATH))).toContain(true)
+        d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: { item_id: ITEM + 2 } })
+        await d.clock.settle()
+        expect(d.api.filter((a: any) => a.method === 'POST' && a.path === `/api/dispatch-queue/${ITEM + 2}/take`)).toHaveLength(1)
+        expect(d.toasts.some((t: string) => t.includes('is still preparing'))).toBe(false)
+      })
+
+      test('a hand-back that waits on the network is preceded by a sign of life: the owner rewrites its mark before the DELETE', async ($, on) => {
+        const d = dashboard(on)
+        d.world.takeReplies[ITEM] = { body: ANSWER }
+        d.world.processes['make'] = { exitCode: 2, stdout: '', stderr: 'shared install damaged' }
+        await startSession($, d, surface)
+        d.relay.push({ cursor: 'c1', text: OFFER_TEXT, offer: OFFER })
+        await d.clock.settle()
+        // the claim, the command and the sign of life before the DELETE: three writes of the owner's mark before it is dropped
+        const live = marksWritten(d).filter((m: unknown) => m !== null)
+        expect(live).toHaveLength(3)
+        expect(live.every((m: any) => m.retry_at === null)).toBe(true)
+        expect(marksWritten(d).at(-1)).toBeNull()
+        expect(calls(d, 'DELETE')).toHaveLength(1)
+      })
+
       test('a taken-over job whose worktree is made is carried on even when the repo has cleared its worktree command since', async ($, on) => {
         const d = dashboard(on)
         d.world.takeReplies[ITEM] = { body: { ...ANSWER, worktree_command: [] } }
@@ -682,6 +737,10 @@ for (const surface of SURFACES) {
         // it waits for the prompt of the job in hand and does not claim again at once
         expect(told(d)[0]).toContain(`Wait for the prompt that tells you queued job ${ITEM}`)
         expect(told(d)[0]).toContain('do not claim')
+        // what is shown: back in the queue for any session, claimable again once this session holds no other job; no promise that 50 Arms offers it again
+        expect(told(d)[0]).toContain('back in the queue for any session')
+        expect(told(d)[0]).toContain('session_holds_job')
+        expect(told(d)[0]).not.toContain('offers it again')
         // the model that claims again at once is handed the job back again, and is not woken again
         await $.tool.call({ ...CLAIM, path: `/api/dispatch-queue/${ITEM + 1}/take` })
         await d.clock.settle()
